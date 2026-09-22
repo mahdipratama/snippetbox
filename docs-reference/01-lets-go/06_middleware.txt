@@ -1,0 +1,2130 @@
+Chapter 6.
+Middleware
+When you’re building a web application there’s probably some shared functionality that you
+want to use for many (or even all) HTTP requests. For example, you might want to log every
+request, compress every response, or check a cache before passing the request to your
+handlers.
+A common way of organizing this shared functionality is to set it up as 
+middleware
+. This is
+essentially some self-contained code which independently acts on a request before or after
+your normal application handlers.
+In this section of the book you’ll learn:
+An idiomatic pattern for 
+building and using custom middleware
+ which is compatible with
+net/http
+ and many third-party packages.
+How to create middleware which 
+sets useful security headers
+ on every HTTP response.
+How to create middleware which 
+logs the requests
+ received by your application.
+How to create middleware which 
+recovers panics
+ so that they are gracefully handled by
+your application.
+How to create and use composable 
+middleware chains
+ to help manage and organize your
+middleware.Chapter 6.1.
+How middleware works
+Earlier in the book
+ I said something that I’d like to expand on in this chapter:
+“You can think of a Go web application as a chain of 
+ServeHTTP()
+ methods being called one
+after another.”
+Currently, in our application, when our server receives a new HTTP request it calls the
+servemux’s 
+ServeHTTP()
+ method. This looks up the relevant handler based on the request
+URL path, and in turn calls that handler’s 
+ServeHTTP()
+ method.
+The basic idea of middleware is to insert another handler into this chain. The middleware
+handler executes some logic, like logging a request, and then calls the 
+ServeHTTP()
+ method
+of the 
+next
+ handler in the chain.
+In fact, we’re actually already using some middleware in our application — the
+http.StripPrefix()
+ function from 
+serving static files
+, which removes a specific prefix from
+the request’s URL path before passing the request on to the file server.
+The pattern
+The standard pattern for creating your own middleware looks like this:
+func
+ 
+myMiddleware
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+fn
+ 
+:=
+ 
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// TODO: Execute our middleware logic here...
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+fn
+)
+}
+The code itself is pretty succinct, but there’s quite a lot in it to get your head around.
+The 
+myMiddleware()
+ function is essentially a wrapper around the 
+next
+ handler.
+It establishes a function 
+fn
+ which 
+closes over
+ the 
+next
+ handler to form a closure. When 
+fn
+is run it executes our middleware logic and then transfers control to the 
+next
+ handler by
+calling it’s 
+ServeHTTP()
+ method.
+Regardless of what you do with a closure it will always be able to access the variables that
+are local to the scope it was created in — which in this case means that 
+fn
+ will always haveaccess to the 
+next
+ variable.
+We then convert this closure to a 
+http.Handler
+ and return it using the
+http.HandlerFunc()
+ adapter.
+If this feels confusing, you can think of it more simply: 
+myMiddleware()
+ is a function that
+accepts the next handler in a chain as a parameter. It 
+returns a handler
+ which executes some
+logic and then calls the next handler.
+Simplifying the middleware
+A tweak to this pattern is to use an anonymous function inside 
+myMiddleware()
+ middleware,
+like so:
+func
+ 
+myMiddleware
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// TODO: Execute our middleware logic here...
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+)
+}
+This pattern is very common in the wild, and the one that you’ll probably see most often if
+you’re reading the source code of other applications or third-party packages.
+Positioning the middleware
+It’s important to explain that where you position the middleware in the chain of handlers will
+affect the behavior of your application.
+If you position your middleware before the servemux in the chain then it will act on every
+request that your application receives.
+myMiddleware 
+→
+ servemux 
+→
+ application handler
+A good example of where this would be useful is middleware to log requests — as that’s
+typically something you would want to do for 
+all
+ requests.
+Alternatively, you can position the middleware after the servemux in the chain — by wrapping
+a specific application handler. This would cause your middleware to only be executed for a
+specific route.servemux 
+→
+ myMiddleware 
+→
+ application handler
+An example of this would be something like authorization middleware, which you may only
+want to run on specific routes.
+We’ll demonstrate how to do both of these things in practice as we progress through the
+book.Chapter 6.2.
+Setting security headers
+Let’s put the pattern we learned in the previous chapter to use, and make our own
+middleware which automatically adds the following HTTP security headers to every response,
+inline with 
+current OWASP guidance
+.
+Content-Security-Policy: default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com
+Referrer-Policy: origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-XSS-Protection: 0
+If you’re not familiar with these headers, I’ll quickly explain what they do.
+Content-Security-Policy
+ (often abbreviated to 
+CSP
+) headers are used to restrict where
+the resources for your web page (e.g. JavaScript, images, fonts etc) can be loaded from.
+Setting a strict CSP policy helps prevent a variety of cross-site scripting, clickjacking, and
+other code-injection attacks.
+CSP headers and how they work is a big topic, and I recommend reading 
+this primer
+ if you
+haven’t come across them before. But, in our case, the header tells the browser that it’s OK
+to load fonts from 
+fonts.gstatic.com
+, stylesheets from 
+fonts.googleapis.com
+ and 
+self
+(our own origin), and then 
+everything else
+ only from 
+self
+. Inline JavaScript is blocked by
+default.
+Referrer-Policy
+ is used to control what information is included in a 
+Referer
+ header
+when a user navigates away from your web page. In our case, we’ll set the value to
+origin-when-cross-origin
+, which means that the full URL will be included for 
+same-
+origin requests
+, but for all other requests information like the URL path and any query
+string values will be stripped out.
+X-Content-Type-Options: nosniff
+ instructs browsers to 
+not
+ MIME-type sniff the content-
+type of the response, which in turn helps to prevent 
+content-sniffing attacks
+.
+X-Frame-Options: deny
+ is used to help prevent 
+clickjacking
+ attacks in older browsers that
+don’t support CSP headers.
+X-XSS-Protection: 0
+ is used to 
+disable
+ the blocking of cross-site scripting attacks.
+Previously it was good practice to set this header to 
+X-XSS-Protection: 1; mode=block
+,
+but when you’re using CSP headers like we are 
+the recommendation
+ is to disable this
+feature altogether.OK, let’s get back to our Go code and begin by creating a new 
+middleware.go
+ file. We’ll use
+this to hold all the custom middleware that we write throughout this book.
+$ touch cmd/web/middleware.go
+Then open it up and add a 
+secureHeaders()
+ function using the pattern that we introduced in
+the previous chapter:
+File: cmd/web/middleware.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+)
+func
+ 
+secureHeaders
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// Note: This is split across multiple lines for readability. You don't 
+        
+// need to do this in your own code.
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Content-Security-Policy"
+,
+            
+"default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com"
+)
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Referrer-Policy"
+,
+ 
+"origin-when-cross-origin"
+)
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"X-Content-Type-Options"
+,
+ 
+"nosniff"
+)
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"X-Frame-Options"
+,
+ 
+"deny"
+)
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"X-XSS-Protection"
+,
+ 
+"0"
+)
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+)
+}
+Because we want this middleware to act on every request that is received, we need it to be
+executed 
+before
+ a request hits our servemux. We want the flow of control through our
+application to look like:
+secureHeaders 
+→
+ servemux 
+→
+ application handler
+To do this we’ll need the 
+secureHeaders
+ middleware function to 
+wrap our servemux
+. Let’s
+update the 
+routes.go
+ file to do exactly that:File: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+"net/http"
+// Update the signature for the routes() method so that it returns a
+// http.Handler instead of *http.ServeMux.
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+mux
+.
+Handle
+(
+"/static/"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+app
+.
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+app
+.
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreate
+)
+    
+// Pass the servemux as the 'next' parameter to the secureHeaders middleware.
+    
+// Because secureHeaders is just a function, and the function returns a
+    
+// http.Handler we don't need to do anything else.
+    
+return
+ 
+secureHeaders
+(
+mux
+)
+}
+Important:
+ Make sure that you update the signature of the 
+routes()
+ method so that it
+returns a 
+http.Handler
+ here, otherwise you’ll get a compile-time error.
+Go ahead and give this a try. Run the application then open a second terminal window and
+play around making some requests with curl. You should see that the security headers are
+now included in every response.
+$ curl -I http://localhost:4000/
+HTTP/1.1 200 OK
+Content-Security-Policy: default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com
+Referrer-Policy: origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-Xss-Protection: 0
+Date: Sun, 06 Feb 2022 07:24:11 GMT
+Content-Type: text/html; charset=utf-8
+Additional information
+Flow of control
+It’s important to know that when the last handler in the chain returns, control is passed back
+up the chain in the reverse direction. So when our code is being executed the flow of control
+actually looks like this:secureHeaders 
+→
+ servemux 
+→
+ application handler 
+→
+ servemux 
+→
+ secureHeaders
+In any middleware handler, code which comes before 
+next.ServeHTTP()
+ will be executed on
+the way down the chain, and any code after 
+next.ServeHTTP()
+ 
+— or in a deferred function —
+will be executed on the way back up.
+func
+ 
+myMiddleware
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// Any code here will execute on the way down the chain.
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+        
+// Any code here will execute on the way back up the chain.
+    
+}
+)
+}
+Early returns
+Another thing to mention is that if you call 
+return
+ in your middleware function 
+before
+ you call
+next.ServeHTTP()
+, then the chain will stop being executed and control will flow back
+upstream.
+As an example, a common use-case for early returns is authentication middleware which only
+allows execution of the chain to continue if a particular check is passed. For instance:
+func
+ 
+myMiddleware
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// If the user isn't authorized send a 403 Forbidden status and
+        
+// return to stop executing the chain.
+        
+if
+ 
+!
+isAuthorized
+(
+r
+)
+ 
+{
+            
+w
+.
+WriteHeader
+(
+http
+.
+StatusForbidden
+)
+            
+return
+        
+}
+        
+// Otherwise, call the next handler in the chain.
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+)
+}
+We’ll use this ‘early return’ pattern 
+later in the book
+ to restrict access to certain parts of our
+application.
+Debugging CSP issues
+While CSP headers are 
+great
+ and you should definitely use them, it’s worth saying that I’ve
+spent hours trying to debug why something isn’t working as expected, only to eventually
+realize that a critical resource or script is being blocked by my own CSP rules 
+
+.If you’re working on a project which is using CSP headers, like this one, I recommend keeping
+your web browser developer tools handy and getting into the habit of checking the logs early
+on if you run into any unexpected problems. In Firefox, any blocked resources will be shown
+as an error in the console logs — similar to this:
+Chapter 6.3.
+Request logging
+Let’s continue in the same vein and add some middleware to 
+log HTTP requests
+. Specifically,
+we’re going to use the 
+information logger
+ that we created earlier to record the IP address of
+the user, and which URL and method are being requested.
+Open your 
+middleware.go
+ file and create a 
+logRequest()
+ method using the standard
+middleware pattern, like so:
+File: cmd/web/middleware.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+logRequest
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+app
+.
+infoLog
+.
+Printf
+(
+"%s - %s %s %s"
+,
+ 
+r
+.
+RemoteAddr
+,
+ 
+r
+.
+Proto
+,
+ 
+r
+.
+Method
+,
+ 
+r
+.
+URL
+.
+RequestURI
+(
+)
+)
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+)
+}
+Notice that this time we’re implementing the middleware as a method on 
+application
+?
+This is perfectly valid to do. Our middleware method has the same signature as before, but
+because it is a method against 
+application
+ it 
+also
+ has access to the handler dependencies
+including the information logger.
+Now let’s update our 
+routes.go
+ file so that the 
+logRequest
+ middleware is executed first, and
+for all requests, so that the flow of control (reading from left to right) looks like this:
+logRequest 
+↔
+ secureHeaders 
+↔
+ servemux 
+↔
+ application handlerFile: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+"net/http"
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+mux
+.
+Handle
+(
+"/static/"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+app
+.
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+app
+.
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreate
+)
+    
+// Wrap the existing chain with the logRequest middleware.
+    
+return
+ 
+app
+.
+logRequest
+(
+secureHeaders
+(
+mux
+)
+)
+}
+Alright… let’s give it a try!
+Restart your application, browse around, and then check your terminal window. You should
+see log output which looks a bit like this:
+$ go run ./cmd/web
+INFO    2022/02/06 09:08:29 Starting server on :4000
+INFO    2022/02/06 09:08:31 127.0.0.1:45988 - HTTP/1.1 GET /
+INFO    2022/02/06 09:08:31 127.0.0.1:45988 - HTTP/1.1 GET /static/css/main.css
+INFO    2022/02/06 09:08:31 127.0.0.1:45988 - HTTP/1.1 GET /static/js/main.js
+INFO    2022/02/06 09:08:31 127.0.0.1:45988 - HTTP/1.1 GET /static/img/logo.png
+INFO    2022/02/06 09:08:31 127.0.0.1:45988 - HTTP/1.1 GET /static/img/favicon.ico
+INFO    2022/02/06 09:08:34 127.0.0.1:45988 - HTTP/1.1 GET /snippet/view?id=2
+Note:
+ Depending on how your browser caches static files, you might need to do a hard
+refresh (or open a new incognito/private browsing tab) to see any requests for static
+files.Chapter 6.4.
+Panic recovery
+In a simple Go application, 
+when your code panics
+ it will result in the application being
+terminated straight away.
+But our web application is a bit more sophisticated. Go’s HTTP server assumes that the effect
+of any panic is isolated to the goroutine serving the active HTTP request (
+remember
+, every
+request is handled in it’s own goroutine).
+Specifically, following a panic our server will log a stack trace to the server error log, unwind
+the stack for the affected goroutine (calling any deferred functions along the way) and close
+the underlying HTTP connection. But it won’t terminate the application, so importantly, any
+panic in your handlers 
+won’t
+ bring down your server.
+But if a panic does happen in one of our handlers, what will the user see?
+Let’s take a look and introduce a deliberate panic into our 
+home
+ handler.
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+panic
+(
+"oops! something went wrong"
+)
+ 
+// Deliberate panic
+    
+snippets
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Latest
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+data
+.
+Snippets
+ 
+=
+ 
+snippets
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"home.tmpl"
+,
+ 
+data
+)
+}
+...
+Restart your application…$ go run ./cmd/web
+INFO    2022/02/06 09:16:38 Starting server on :4000
+… and make a HTTP request for the home page from a second terminal window:
+$ curl -i http://localhost:4000
+curl: (52) Empty reply from server
+Unfortunately, all we get is an empty response due to Go closing the underlying HTTP
+connection following the panic.
+This isn’t a great experience for the user. It would be more appropriate and meaningful to
+send them a proper HTTP response with a 
+500 Internal Server Error
+ status instead.
+A neat way of doing this is to create some middleware which 
+recovers
+ the panic and calls our
+app.serverError()
+ helper method. To do this, we can leverage the fact that deferred
+functions are always called when the stack is being unwound following a panic.
+Open up your 
+middleware.go
+ file and add the following code:
+File: cmd/web/middleware.go
+package
+ 
+main
+import
+ 
+(
+    
+"fmt"
+ 
+// New import
+    
+"net/http"
+)
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+recoverPanic
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// Create a deferred function (which will always be run in the event
+        
+// of a panic as Go unwinds the stack).
+        
+defer
+ 
+func
+(
+)
+ 
+{
+            
+// Use the builtin recover function to check if there has been a
+            
+// panic or not. If there has...
+            
+if
+ 
+err
+ 
+:=
+ 
+recover
+(
+)
+;
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+                
+// Set a "Connection: close" header on the response.
+                
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Connection"
+,
+ 
+"close"
+)
+                
+// Call the app.serverError helper method to return a 500
+                
+// Internal Server response.
+                
+app
+.
+serverError
+(
+w
+,
+ 
+fmt
+.
+Errorf
+(
+"%s"
+,
+ 
+err
+)
+)
+            
+}
+        
+}
+(
+)
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+)
+}
+There are two details about this which are worth explaining:Setting the 
+Connection: Close
+ header on the response acts as a trigger to make Go’s
+HTTP server automatically close the current connection after a response has been sent. It
+also informs the user that the connection 
+will be closed
+. Note: If the protocol being used is
+HTTP/2, Go will 
+automatically
+ strip the 
+Connection: Close
+ header from the response (so it
+is not malformed) and send a 
+GOAWAY
+ frame.
+The value returned by the builtin 
+recover()
+ function has the type 
+any
+, and its underlying
+type could be 
+string
+, 
+error
+, or something else — whatever the parameter passed to
+panic()
+ was. In our case, it’s the string 
+"oops! something went wrong"
+. In the code
+above, we normalize this into an 
+error
+ by using the 
+fmt.Errorf()
+ function to create a new
+error
+ object containing the default textual representation of the 
+any
+ value, and then pass
+this 
+error
+ to the 
+app.serverError()
+ helper method.
+Let’s now put this to use in the 
+routes.go
+ file, so that it is the 
+first
+ thing in our chain to be
+executed (so that it covers panics in all subsequent middleware and handlers).
+File: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+"net/http"
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+mux
+.
+Handle
+(
+"/static/"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+app
+.
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+app
+.
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreate
+)
+    
+// Wrap the existing chain with the recoverPanic middleware.
+    
+return
+ 
+app
+.
+recoverPanic
+(
+app
+.
+logRequest
+(
+secureHeaders
+(
+mux
+)
+)
+)
+}
+If you restart the application and make a request for the homepage now, you should see a
+nicely formed 
+500 Internal Server Error
+ response following the panic, including the
+Connection: close
+ header that we talked about.
+$ go run ./cmd/web
+INFO    2022/02/06 09:20:10 Starting server on :4000$ curl -i http://localhost:4000
+HTTP/1.1 500 Internal Server Error
+Connection: close
+Content-Security-Policy: default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com
+Content-Type: text/plain; charset=utf-8
+Referrer-Policy: origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-Xss-Protection: 0
+Date: Sun, 06 Feb 2022 08:20:27 GMT
+Content-Length: 22
+Internal Server Error
+Before we continue, head back to your 
+home
+ handler and remove the deliberate panic from
+the code.
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+snippets
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Latest
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+data
+.
+Snippets
+ 
+=
+ 
+snippets
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"home.tmpl"
+,
+ 
+data
+)
+}
+...
+Additional information
+Panic recovery in other background goroutines
+It’s important to realise that our middleware will only recover panics that happen in the 
+same
+goroutine that executed the 
+recoverPanic()
+ middleware
+.
+If, for example, you have a handler which spins up another goroutine (e.g. to do somebackground processing), then any panics that happen in the second goroutine will not be
+recovered — not by the 
+recoverPanic()
+ middleware… and not by the panic recovery built
+into Go HTTP server. They will cause your application to exit and bring down the server.
+So, if you are spinning up additional goroutines from within your web application and there is
+any chance of a panic, you must make sure that you recover any panics from within those too.
+For example:
+func
+ 
+myHandler
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+...
+    
+// Spin up a new goroutine to do some background processing.
+    
+go
+ 
+func
+(
+)
+ 
+{
+        
+defer
+ 
+func
+(
+)
+ 
+{
+            
+if
+ 
+err
+ 
+:=
+ 
+recover
+(
+)
+;
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+                
+log
+.
+Print
+(
+fmt
+.
+Errorf
+(
+"%s\n%s"
+,
+ 
+err
+,
+ 
+debug
+.
+Stack
+(
+)
+)
+)
+            
+}
+        
+}
+(
+)
+        
+doSomeBackgroundProcessing
+(
+)
+    
+}
+(
+)
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"OK"
+)
+)
+}Chapter 6.5.
+Composable middleware chains
+In this chapter I’d like to introduce the 
+justinas/alice
+ package to help us manage our
+middleware/handler chains.
+You don’t 
+need
+ to use this package, but the reason I recommend it is because it makes it easy
+to create composable, reusable, middleware chains — and that can be a real help as your
+application grows and your routes become more complex. The package itself is also small and
+lightweight, and the code is clear and well written.
+To demonstrate its features in one example, it allows you to rewrite a handler chain like this:
+return
+ 
+myMiddleware1
+(
+myMiddleware2
+(
+myMiddleware3
+(
+myHandler
+)
+)
+)
+Into this, which is a bit clearer to understand at a glance:
+return
+ 
+alice
+.
+New
+(
+myMiddleware1
+,
+ 
+myMiddleware2
+,
+ 
+myMiddleware3
+)
+.
+Then
+(
+myHandler
+)
+But the real power lies in the fact that you can use it to create middleware chains that can be
+assigned to variables, appended to, and reused. For example:
+myChain
+ 
+:=
+ 
+alice
+.
+New
+(
+myMiddlewareOne
+,
+ 
+myMiddlewareTwo
+)
+myOtherChain
+ 
+:=
+ 
+myChain
+.
+Append
+(
+myMiddleware3
+)
+return
+ 
+myOtherChain
+.
+Then
+(
+myHandler
+)
+If you’re following along, please install the 
+justinas/alice
+ package using 
+go get
+:
+$ go get github.com/justinas/alice@v1
+go: downloading github.com/justinas/alice v1.2.0
+And if you open the 
+go.mod
+ file for your project, you should see a new corresponding 
+require
+statement, like so:File: go.mod
+module snippetbox.alexedwards.net
+go 1.20
+require (
+    github.com/go-sql-driver/mysql v1.7.0
+    github.com/justinas/alice v1.2.0
+)
+OK, let’s update our 
+routes.go
+ file to use the 
+justinas/alice
+ package as follows:
+File: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+    
+"github.com/justinas/alice"
+ 
+// New import
+)
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+mux
+.
+Handle
+(
+"/static/"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+app
+.
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+app
+.
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreate
+)
+    
+// Create a middleware chain containing our 'standard' middleware
+    
+// which will be used for every request our application receives.
+    
+standard
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+recoverPanic
+,
+ 
+app
+.
+logRequest
+,
+ 
+secureHeaders
+)
+    
+// Return the 'standard' middleware chain followed by the servemux.
+    
+return
+ 
+standard
+.
+Then
+(
+mux
+)
+}
+If you want, feel free to restart the application at this point. You should find that everything
+compiles correctly and the application continues to work in the same way as before.

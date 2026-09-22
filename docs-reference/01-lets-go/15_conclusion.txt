@@ -1,0 +1,62 @@
+Chapter 15.
+Conclusion
+Over the course of this book we’ve explicitly covered a lot of topics, including routing,
+templating, working with a database, authentication/authorization, using HTTPS, using Go’s
+testing package and more.
+But there have been some other, more tacit, lessons too. The patterns that we’ve used to
+implement features — and the way that our project code is organized and links together — is
+something that you should be able to take and apply in your future work.
+Importantly, I also wanted the book to convey that 
+you don’t need a framework to build web
+applications in Go
+. Go’s standard library contains almost all the tools that you need… even for
+a moderately complex application. For the times that you do need help with a specific task —
+like session management, routing or password hashing — there are lightweight and focused
+third-party packages that you can reach for.
+At this point, if you’ve coded along with the book, I recommend taking a bit of time to review
+the code that you’ve written so far. As you go through it, make sure that you’re clear in your
+mind about what each part of the codebase does, and how it fits in with the project as a
+whole.
+You might also want to circle back to any parts of the book that you found difficult to
+understand the first-time around. For example, now that you’re more familiar with Go, 
+the
+http.Handler
+ interface
+ chapter might be easier to digest. Or, now that you’ve seen how
+testing is handled in our application, the decisions we made in the 
+designing a database
+model
+ chapter might click into place.
+If you bought the 
+Professional Package
+ version of this book, then I strongly recommend
+working through the guided exercises in chapter 17 (right at the end of this book, after this
+conclusion and the appendices). The exercises should help to consolidate what you’ve
+learned — and working through them semi-independently will give you some extra practice
+with the patterns and techniques from this book before you use them again in your own
+projects.Let's Go Further
+If you’d like to continue learning more, then you might want to check out 
+Let’s Go Further
+. It’s
+written as a follow-up to this book, and covers more advanced patterns for developing,
+managing and deploying APIs and web applications.
+It guides you through the start-to-finish build and deployment of a RESTful JSON API, and
+includes topics like:
+Sending and receiving JSON
+Working with SQL migrations
+Managing background tasks
+Performing partial updates and using optimistic locking
+Permission-based authorization
+Controlling CORS requests
+Graceful shutdowns
+Exposing application metrics
+Automating build and deployment steps
+You can check out a sample of the book, and get more information and FAQ answers at
+https://lets-go-further.alexedwards.net
+.
+As a small gift for existing readers, you can also use the discount code 
+FURTHER15
+ at
+checkout to get 
+15% off
+ the regular list price.

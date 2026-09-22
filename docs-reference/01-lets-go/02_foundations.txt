@@ -1,0 +1,4407 @@
+Chapter 2.
+Foundations
+Alright, let’s get started! In this first section of the book we’re going to lay the groundwork for
+our project and explain the main principles that you need to know for the rest of the
+application build.
+You’ll learn how to:
+Setup a project directory
+ which follows the Go conventions.
+Start a web server
+ and listen for incoming HTTP requests.
+Route requests
+ to different handlers based on the request path.
+Send different 
+HTTP responses, headers and status codes
+ to users.
+Fetch and validate untrusted user input from URL 
+query string parameters
+.
+Structure your project
+ in a sensible and scalable way.
+Render HTML pages
+ and use template inheritance to keep your markup free of duplicate
+boilerplate code.
+Serve static files
+ like images, CSS and JavaScript from your application.Chapter 2.1.
+Project setup and creating a module
+Before we write any code, you’ll need to create a 
+snippetbox
+ directory on your computer to
+act as the top-level ‘home’ for this project. All the Go code we write throughout the book will
+live in here, along with other project-specific assets like HTML templates and CSS files.
+So, if you’re following along, open your terminal and create a new project directory called
+snippetbox
+ anywhere on your computer. I’m going to locate my project directory under
+$HOME/code
+, but you can choose a different location if you wish.
+$ mkdir -p $HOME/code/snippetbox
+Creating a module
+The next thing you need to do is choose a 
+module path
+ for your project.
+If you’re not already familiar with 
+Go modules
+, you can think of a module path as basically
+being a canonical name or 
+identifier
+ for your project.
+You can pick 
+almost any string
+ as your module path, but the important thing to focus on is
+uniqueness
+. To avoid potential import conflicts with other people’s projects or the standard
+library in the future, you want to pick a module path that is globally unique and unlikely to be
+used by anything else. In the Go community, a common convention is to base your module
+paths on a URL that you own.
+In my case, a clear, succinct and 
+unlikely-to-be-used-by-anything-else
+ module path for this
+project would be 
+snippetbox.alexedwards.net
+, and I’ll use this throughout the rest of the
+book. If possible, you should swap this for something that’s unique to you instead.
+Now that we’ve decided a unique module path, the next thing that we need to do is turn our
+project directory into a module.
+Make sure that you’re in the root of the directory and then run the 
+go mod init
+ command —
+passing in your module path as a parameter like so:
+$ cd $HOME/code/snippetbox
+$ go mod init snippetbox.alexedwards.net
+go: creating new go.mod: module snippetbox.alexedwards.netAt this point your project directory should look a bit like the screenshot below. Notice the
+go.mod
+ file which has been created?
+At the moment there’s not much going on in this file, and if you open it up in your text editor
+it should look like this (but preferably with your own unique module path instead):
+File: go.mod
+module snippetbox.alexedwards.net
+go 1.20
+We’ll talk about modules in more detail later in the book, but for now it’s enough to know
+that when there is a valid 
+go.mod
+ file in the root of your project directory, your project 
+is a
+module
+. Setting up your project as a module has a number of advantages — including making
+it much easier to manage third-party dependencies, 
+avoid supply-chain attacks
+, and ensure
+reproducible builds of your application in the future.
+Hello world!
+Before we continue, let’s quickly check that everything is set up correctly. Go ahead and
+create a new 
+main.go
+ in your project directory containing the following code:$ touch main.go
+File: main.go
+package
+ 
+main
+import
+ 
+"fmt"
+func
+ 
+main
+(
+)
+ 
+{
+    
+fmt
+.
+Println
+(
+"Hello world!"
+)
+}
+Save this file, then use the 
+go run .
+ command in your terminal to compile and execute the
+code in the current directory. All being well, you will see the following output:
+$ go run .
+Hello world!
+Additional information
+Module paths for downloadable packages
+If you’re creating a project which can be downloaded and used by other people and
+programs, then it’s good practice for your module path to equal the location that the code
+can be downloaded from.
+For instance, if your package is hosted at 
+https://github.com/foo/bar
+ then the module path
+for the project should be 
+github.com/foo/bar
+.Chapter 2.2.
+Web application basics
+Now that everything is set up correctly let’s make the first iteration of our web application.
+We’ll begin with the three absolute essentials:
+The first thing we need is a 
+handler
+. If you’re coming from an MVC-background, you can
+think of handlers as being a bit like controllers. They’re responsible for executing your
+application logic and for writing HTTP response headers and bodies.
+The second component is a router (or 
+servemux
+ in Go terminology). This stores a mapping
+between the URL patterns for your application and the corresponding handlers. Usually
+you have one servemux for your application containing all your routes.
+The last thing we need is a 
+web server
+. One of the great things about Go is that you can
+establish a web server and listen for incoming requests 
+as part of your application itself
+.
+You don’t need an external third-party server like Nginx or Apache.
+Let’s put these components together in the 
+main.go
+ file to make a working application.
+File: main.go
+package
+ 
+main
+import
+ 
+(
+    
+"log"
+    
+"net/http"
+)
+// Define a home handler function which writes a byte slice containing
+// "Hello from Snippetbox" as the response body.
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Hello from Snippetbox"
+)
+)
+}
+func
+ 
+main
+(
+)
+ 
+{
+    
+// Use the http.NewServeMux() function to initialize a new servemux, then
+    
+// register the home function as the handler for the "/" URL pattern.
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+home
+)
+    
+// Use the http.ListenAndServe() function to start a new web server. We pass in
+    
+// two parameters: the TCP network address to listen on (in this case ":4000")
+    
+// and the servemux we just created. If http.ListenAndServe() returns an error
+    
+// we use the log.Fatal() function to log the error message and exit. Note
+    
+// that any error returned by http.ListenAndServe() is always non-nil.
+    
+log
+.
+Print
+(
+"Starting server on :4000"
+)
+    
+err
+ 
+:=
+ 
+http
+.
+ListenAndServe
+(
+":4000"
+,
+ 
+mux
+)
+    
+log
+.
+Fatal
+(
+err
+)
+}Note:
+ The 
+home
+ handler function is just a regular Go function with two parameters. The
+http.ResponseWriter
+ parameter provides methods for assembling a HTTP response
+and sending it to the user, and the 
+*http.Request
+ parameter is a pointer to a struct
+which holds information about the current request (like the HTTP method and the URL
+being requested). We’ll talk more about these parameters and demonstrate how to use
+them as we progress through the book.
+When you run this code, it should start a web server listening on port 4000 of your local
+machine. Each time the server receives a new HTTP request it will pass the request on to the
+servemux and — in turn — the servemux will check the URL path and dispatch the request to
+the matching handler.
+Let’s give this a whirl. Save your 
+main.go
+ file and then try running it from your terminal using
+the 
+go run
+ command.
+$ cd $HOME/code/snippetbox
+$ go run .
+2022/01/29 11:13:26 Starting server on :4000
+While the server is running, open a web browser and try visiting 
+http://localhost:4000
+. If
+everything has gone to plan you should see a page which looks a bit like this:
+Important:
+ Before we continue, I should explain that Go’s servemux treats the URL
+pattern 
+"/"
+ like a catch-all. So at the moment 
+all
+ HTTP requests to our server will be
+handled by the 
+home
+ function, regardless of their URL path. For instance, you can visit a
+different URL path like 
+http://localhost:4000/foo
+ and you’ll receive exactly the same
+response.
+If you head back to your terminal window, you can stop the server by pressing 
+Ctrl+c
+ on your
+keyboard.
+Additional information
+Network addresses
+The TCP network address that you pass to 
+http.ListenAndServe()
+ should be in the format
+"host:port"
+. If you omit the host (like we did with 
+":4000"
+) then the server will listen on all
+your computer’s available network interfaces. Generally, you only need to specify a host in
+the address if your computer has multiple network interfaces and you want to listen on just
+one of them.
+In other Go projects or documentation you might sometimes see network addresses written
+using named ports like 
+":http"
+ or 
+":http-alt"
+ instead of a number. If you use a named port
+then Go will attempt to look up the relevant port number from your 
+/etc/services
+ file when
+starting the server, or will return an error if a match can’t be found.
+Using go run
+During development the 
+go run
+ command is a convenient way to try out your code. It’s
+essentially a shortcut that compiles your code, creates an executable binary in your 
+/tmp
+directory, and then runs this binary in one step.
+It accepts either a space-separated list of 
+.go
+ files, the path to a specific package (where the 
+.
+character represents your current directory), or the full module path. For our application at
+the moment, the three following commands are all equivalent:
+$ go run .
+$ go run main.go
+$ go run snippetbox.alexedwards.netChapter 2.3.
+Routing requests
+Having a web application with just one route isn’t very exciting… or useful! Let’s add a couple
+more routes so that the application starts to shape up like this:
+URL Pattern
+Handler
+Action
+/
+home
+Display the home page
+/snippet/view
+snippetView
+Display a specific snippet
+/snippet/create
+snippetCreate
+Create a new snippet
+Reopen the 
+main.go
+ file and update it as follows:
+File: main.go
+package
+ 
+main
+import
+ 
+(
+    
+"log"
+    
+"net/http"
+)
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Hello from Snippetbox"
+)
+)
+}
+// Add a snippetView handler function.
+func
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Display a specific snippet..."
+)
+)
+}
+// Add a snippetCreate handler function.
+func
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Create a new snippet..."
+)
+)
+}
+func
+ 
+main
+(
+)
+ 
+{
+    
+// Register the two new handler functions and corresponding URL patterns with
+    
+// the servemux, in exactly the same way that we did before.
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+snippetCreate
+)
+    
+log
+.
+Print
+(
+"Starting server on :4000"
+)
+    
+err
+ 
+:=
+ 
+http
+.
+ListenAndServe
+(
+":4000"
+,
+ 
+mux
+)
+    
+log
+.
+Fatal
+(
+err
+)
+}Make sure these changes are saved and then restart the web application:
+$ cd $HOME/code/snippetbox
+$ go run .
+2022/01/29 11:16:43 Starting server on :4000
+If you visit the following links in your web browser you should now get the appropriate
+response for each route:
+http://localhost:4000/snippet/view
+http://localhost:4000/snippet/createFixed path and subtree patterns
+Now that the two new routes are up and running let’s talk a bit of theory.
+Go’s servemux supports two different types of URL patterns: 
+fixed paths
+ and 
+subtree paths
+.
+Fixed paths 
+don’t
+ end with a trailing slash, whereas subtree paths 
+do
+ end with a trailing slash.
+Our two new patterns — 
+"/snippet/view"
+ and 
+"/snippet/create"
+ — are both examples of
+fixed paths. In Go’s servemux, fixed path patterns like these are only matched (and the
+corresponding handler called) when the request URL path 
+exactly
+ matches the fixed path.
+In contrast, our pattern 
+"/"
+ is an example of a subtree path (because it ends in a trailing
+slash). Another example would be something like 
+"/static/"
+. Subtree path patterns are
+matched (and the corresponding handler called) whenever the 
+start
+ of a request URL path
+matches the subtree path. If it helps your understanding, you can think of subtree paths as
+acting a bit like they have a wildcard at the end, like 
+"/**"
+ or 
+"/static/**"
+.
+This helps explain why the 
+"/"
+ pattern is acting like a catch-all. The pattern essentially means
+match a single slash, followed by anything (or nothing at all)
+.
+Restricting the root url patternSo what if you don’t want the 
+"/"
+ pattern to act like a catch-all?
+For instance, in the application we’re building we want the home page to be displayed if —
+and only if — the request URL path exactly matches 
+"/"
+. 
+Otherwise, we want the user to
+receive a 
+404 page not found
+ response.
+It’s not possible to change the behavior of Go’s servemux to do this, but you 
+can
+ include a
+simple check in the 
+home
+ hander which ultimately has the same effect:
+File: main.go
+package
+ 
+main
+...
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// Check if the current request URL path exactly matches "/". If it doesn't, use
+    
+// the http.NotFound() function to send a 404 response to the client.
+    
+// Importantly, we then return from the handler. If we don't return the handler
+    
+// would keep executing and also write the "Hello from SnippetBox" message.
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Hello from Snippetbox"
+)
+)
+}
+...
+Go ahead and make that change, then restart the server and make a request for an
+unregistered URL path like 
+http://localhost:4000/missing
+. You should get a 
+404
+ response
+which looks a bit like this:The DefaultServeMux
+If you’ve been working with Go for a while you might have come across the 
+http.Handle()
+and 
+http.HandleFunc()
+ functions. These allow you to register routes 
+without
+ declaring a
+servemux, like this:
+func
+ 
+main
+(
+)
+ 
+{
+    
+http
+.
+HandleFunc
+(
+"/"
+,
+ 
+home
+)
+    
+http
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+snippetView
+)
+    
+http
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+snippetCreate
+)
+    
+log
+.
+Print
+(
+"Starting server on :4000"
+)
+    
+err
+ 
+:=
+ 
+http
+.
+ListenAndServe
+(
+":4000"
+,
+ 
+nil
+)
+    
+log
+.
+Fatal
+(
+err
+)
+}
+Behind the scenes, these functions register their routes with something called the
+DefaultServeMux
+. There’s nothing special about this — it’s just regular servemux like we’ve
+already been using, but which is initialized by default and stored in a 
+net/http
+ global
+variable. Here’s the relevant line from the Go source code:
+var
+ 
+DefaultServeMux
+ 
+=
+ 
+NewServeMux
+(
+)
+Although this approach can make your code slightly shorter, I don’t recommend it forproduction applications.
+Because 
+DefaultServeMux
+ is a global variable, any package can access it and register a route
+— including any third-party packages that your application imports. If one of those third-
+party packages is compromised, they could use 
+DefaultServeMux
+ to expose a malicious
+handler to the web.
+So, for the sake of security, it’s generally a good idea to avoid 
+DefaultServeMux
+ and the
+corresponding helper functions. Use your own locally-scoped servemux instead, like we have
+been doing in this project so far.
+Additional information
+Servemux features and quirks
+In Go’s servemux, longer URL patterns always take precedence over shorter ones. So, if a
+servemux contains multiple patterns which match a request, it will always dispatch the
+request to the handler corresponding to the longest pattern. This has the nice side-effect
+that you can register patterns in any order 
+and it won’t change how the servemux behaves
+.
+Request URL paths are automatically sanitized. If the request path contains any 
+.
+ or 
+..
+elements or repeated slashes, the user will automatically be redirected to an equivalent
+clean URL. For example, if a user makes a request to 
+/foo/bar/..//baz
+ they will
+automatically be sent a 
+301 Permanent Redirect
+ to 
+/foo/baz
+ instead.
+If a subtree path has been registered and a request is received for that subtree path
+without
+ a trailing slash, then the user will automatically be sent a 
+301 Permanent Redirect
+to the subtree path with the slash added. For example, if you have registered the subtree
+path 
+/foo/
+, then any request to 
+/foo
+ will be redirected to 
+/foo/
+.
+Host name matching
+It’s possible to include host names in your URL patterns. This can be useful when you want to
+redirect all HTTP requests to a canonical URL, or if your application is acting as the back end
+for multiple sites or services. For example:
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+mux
+.
+HandleFunc
+(
+"foo.example.org/"
+,
+ 
+fooHandler
+)
+mux
+.
+HandleFunc
+(
+"bar.example.org/"
+,
+ 
+barHandler
+)
+mux
+.
+HandleFunc
+(
+"/baz"
+,
+ 
+bazHandler
+)When it comes to pattern matching, any host-specific patterns will be checked first and if
+there is a match the request will be dispatched to the corresponding handler. Only when
+there 
+isn’t
+ a host-specific match found will the non-host specific patterns also be checked.
+What about RESTful routing?
+It’s important to acknowledge that the routing functionality provided by Go’s servemux is
+pretty lightweight. It doesn’t support routing based on the request method, it doesn’t
+support clean URLs with variables in them, and it doesn’t support regexp-based patterns. If
+you have a background in using frameworks like Rails, Django or Laravel you might find this a
+bit restrictive… and surprising!
+But don’t let that put you off. The reality is that Go’s servemux can still get you quite far, and
+for many applications is perfectly sufficient. For the times that you need more, there’s a huge
+choice of third-party routers that you can use instead of Go’s servemux. We’ll look at some of
+the popular options later in the book.Chapter 2.4.
+Customizing HTTP headers
+Let’s now update our application so that the 
+/snippet/create
+ route only responds to HTTP
+requests which use the 
+POST
+ method, like so:
+Method
+Pattern
+Handler
+Action
+ANY
+/
+home
+Display the home page
+ANY
+/snippet/view
+snippetView
+Display a specific snippet
+POST
+/snippet/create
+snippetCreate
+Create a new snippet
+Making this change is important because — later in our application build — requests to the
+/snippet/create
+ route will result in a new snippet being created in a database. Creating a
+new snippet in a database is a non-idempotent action that changes the state of our server, so
+we should follow 
+HTTP good practice
+ and restrict this route to act on 
+POST
+ requests only.
+But the main reason I want to cover this now is because it’s a good excuse to talk about HTTP
+response headers and explain how to customize them.
+HTTP status codes
+Let’s begin by updating our 
+snippetCreate
+ handler function so that it sends a 
+405
+ (method
+not allowed) HTTP status code 
+unless
+ the request method is 
+POST
+. To do this we’ll need to use
+the 
+w.WriteHeader()
+ method like so:File: main.go
+package
+ 
+main
+...
+func
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// Use r.Method to check whether the request is using POST or not.
+    
+if
+ 
+r
+.
+Method
+ 
+!=
+ 
+"POST"
+ 
+{
+        
+// If it's not, use the w.WriteHeader() method to send a 405 status
+        
+// code and the w.Write() method to write a "Method Not Allowed"
+        
+// response body. We then return from the function so that the
+        
+// subsequent code is not executed.
+        
+w
+.
+WriteHeader
+(
+405
+)
+        
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Method Not Allowed"
+)
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Create a new snippet..."
+)
+)
+}
+...
+Although this change looks straightforward there are a couple of nuances I should explain:
+It’s only possible to call 
+w.WriteHeader()
+ once per response, and after the status code has
+been written it can’t be changed. If you try to call 
+w.WriteHeader()
+ a second time Go will
+log a warning message.
+If you don’t call 
+w.WriteHeader()
+ explicitly, then the first call to 
+w.Write()
+ will
+automatically send a 
+200 OK
+ status code to the user. 
+So, if you want to send a non-200
+status code, you must call 
+w.WriteHeader()
+ 
+before
+ any call to 
+w.Write()
+.
+Let’s take a look at this in action.
+Restart the server, then open a second terminal window and use curl to make a 
+POST
+ request
+to 
+http://localhost:4000/snippet/create
+. You should get a HTTP response with a 
+200 OK
+status code similar to this:
+$ curl -i -X POST http://localhost:4000/snippet/create
+HTTP/1.1 200 OK
+Date: Sat, 29 Jan 2022 10:27:14 GMT
+Content-Length: 23
+Content-Type: text/plain; charset=utf-8
+Create a new snippet...
+But if you use a different request method — like 
+GET
+, 
+PUT
+ or 
+DELETE
+ — you should now get
+response with a 
+405 Method Not Allowed
+ status code. For example:$ curl -i -X PUT http://localhost:4000/snippet/create
+HTTP/1.1 405 Method Not Allowed
+Date: Sat, 29 Jan 2022 10:27:55 GMT
+Content-Length: 18
+Content-Type: text/plain; charset=utf-8
+Method Not Allowed
+Customizing headers
+Another improvement we can make is to include an 
+Allow
+ header with the
+405 Method Not Allowed
+ response to let the user know which request methods 
+are
+supported for that particular URL.
+We can do this by using the 
+w.Header().Set()
+ method to add a new header to the 
+response
+header map
+, like so:
+File: main.go
+package
+ 
+main
+...
+func
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+Method
+ 
+!=
+ 
+"POST"
+ 
+{
+        
+// Use the Header().Set() method to add an 'Allow: POST' header to the
+        
+// response header map. The first parameter is the header name, and
+        
+// the second parameter is the header value.
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Allow"
+,
+ 
+"POST"
+)
+        
+w
+.
+WriteHeader
+(
+405
+)
+        
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Method Not Allowed"
+)
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Create a new snippet..."
+)
+)
+}
+...
+Important:
+ Changing the response header map after a call to 
+w.WriteHeader()
+ or
+w.Write()
+ will have no effect on the headers that the user receives. You need to make
+sure that your response header map contains all the headers you want 
+before
+ you call
+these methods.
+Let’s take a look at this in action again by sending a non-
+POST
+ request to our
+/snippet/create
+ URL, like so:$ curl -i -X PUT http://localhost:4000/snippet/create
+HTTP/1.1 405 Method Not Allowed
+Allow: POST
+Date: Sat, 29 Jan 2022 10:29:12 GMT
+Content-Length: 18
+Content-Type: text/plain; charset=utf-8
+Method Not Allowed
+Notice how the response now includes our new 
+Allow: POST
+ header?
+The http.Error shortcut
+If you want to send a non-
+200
+ status code and a plain-text response body (like we are in the
+code above) then it’s a good opportunity to use the 
+http.Error()
+ shortcut. This is a
+lightweight helper function which takes a given message and status code, then calls the
+w.WriteHeader()
+ and 
+w.Write()
+ methods behind-the-scenes for us.
+Let’s update the code to use this instead.
+File: main.go
+package
+ 
+main
+...
+func
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+Method
+ 
+!=
+ 
+"POST"
+ 
+{
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Allow"
+,
+ 
+"POST"
+)
+        
+// Use the http.Error() function to send a 405 status code and "Method Not
+        
+// Allowed" string as the response body.
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Method Not Allowed"
+,
+ 
+405
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Create a new snippet..."
+)
+)
+}
+...
+In terms of functionality this is almost exactly the same. The biggest difference is that we’re
+now passing our 
+http.ResponseWriter
+ to another function, which sends a response to the
+user for us.
+The pattern of passing 
+http.ResponseWriter
+ to other functions is super-common in Go, and
+something we’ll do a lot throughout this book. In practice, it’s quite rare to use the 
+w.Write()
+and 
+w.WriteHeader()
+ methods directly like we have been doing so far. But I wanted to
+introduce them upfront because they underpin the more advanced (and interesting!) ways to
+send responses.The net/http constants
+One final tweak we can make is to use constants from the 
+net/http
+ package for HTTP
+methods and status codes, instead of writing the strings and integers ourselves.
+Specifically, we can use the constant 
+http.MethodPost
+ instead of the string 
+"POST"
+, and the
+constant 
+http.StatusMethodNotAllowed
+ instead of the integer 
+405
+. Like so:
+File: main.go
+package
+ 
+main
+...
+func
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+Method
+ 
+!=
+ 
+http
+.
+MethodPost
+ 
+{
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Allow"
+,
+ 
+http
+.
+MethodPost
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Method Not Allowed"
+,
+ 
+http
+.
+StatusMethodNotAllowed
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Create a new snippet..."
+)
+)
+}
+...
+Using these constants is good practice because it helps prevent runtime errors due to typos,
+and in the case of the HTTP status code constants, it can also help make your code clearer
+and self-documenting — especially when dealing with less-commonly-used status codes.
+Hint:
+ You can find the complete list of the 
+net/http
+ package’s constants 
+here
+.
+Additional information
+System-generated headers and content sniffing
+When sending a response Go will automatically set three 
+system-generated
+ headers for you:
+Date
+ and 
+Content-Length
+ and 
+Content-Type
+.
+The 
+Content-Type
+ header is particularly interesting. Go will attempt to set the correct one for
+you by 
+content sniffing
+ the response body with the 
+http.DetectContentType()
+ function. If
+this function can’t guess the content type, Go will fall back to setting the header
+Content-Type: application/octet-stream
+ instead.The 
+http.DetectContentType()
+ function generally works quite well, but a common gotcha
+for web developers new to Go is that it can’t distinguish JSON from plain text. So, by default,
+JSON responses will be sent with a 
+Content-Type: text/plain; charset=utf-8
+ header. You
+can prevent this from happening by setting the correct header manually like so:
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Content-Type"
+,
+ 
+"application/json"
+)
+w
+.
+Write
+(
+[
+]
+byte
+(
+`
+{
+"name":"Alex"}
+`
+)
+)
+Manipulating the header map
+In the code above we used 
+w.Header().Set()
+ to add a new header to the response header
+map. But there’s also 
+Add()
+, 
+Del()
+, 
+Get()
+ and 
+Values()
+ methods that you can use to read
+and manipulate the header map too.
+// Set a new cache-control header. If an existing "Cache-Control" header exists
+// it will be overwritten.
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Cache-Control"
+,
+ 
+"public, max-age=31536000"
+)
+// In contrast, the Add() method appends a new "Cache-Control" header and can
+// be called multiple times.
+w
+.
+Header
+(
+)
+.
+Add
+(
+"Cache-Control"
+,
+ 
+"public"
+)
+w
+.
+Header
+(
+)
+.
+Add
+(
+"Cache-Control"
+,
+ 
+"max-age=31536000"
+)
+// Delete all values for the "Cache-Control" header.
+w
+.
+Header
+(
+)
+.
+Del
+(
+"Cache-Control"
+)
+// Retrieve the first value for the "Cache-Control" header.
+w
+.
+Header
+(
+)
+.
+Get
+(
+"Cache-Control"
+)
+// Retrieve a slice of all values for the "Cache-Control" header.
+w
+.
+Header
+(
+)
+.
+Values
+(
+"Cache-Control"
+)
+Header canonicalization
+When you’re using the 
+Set()
+, 
+Add()
+, 
+Del()
+, 
+Get()
+ and 
+Values()
+ methods on the header map,
+the header name will always be canonicalized using the
+textproto.CanonicalMIMEHeaderKey()
+ function. This converts the first letter and any letter
+following a hyphen to upper case, and the rest of the letters to lowercase. This has the
+practical implication that when calling these methods the header name is 
+case-insensitive
+.
+If you need to avoid this canonicalization behavior you can edit the underlying header map
+directly (it has the type 
+map[string][]string
+). For example:
+w
+.
+Header
+(
+)
+[
+"X-XSS-Protection"
+]
+ 
+=
+ 
+[
+]
+string
+{
+"1; mode=block"
+}Note:
+ If a HTTP/2 connection is being used, Go will 
+always
+ automatically convert the
+header names and values to lowercase for you as per 
+the HTTP/2 specifications
+.
+Suppressing system-generated headers
+The 
+Del()
+ method doesn’t remove system-generated headers. To suppress these, you need
+to access the underlying header map directly and set the value to 
+nil
+. If you want to suppress
+the 
+Date
+ header, for example, you need to write:
+w
+.
+Header
+(
+)
+[
+"Date"
+]
+ 
+=
+ 
+nilChapter 2.5.
+URL query strings
+While we’re on the subject of routing, let’s update the 
+snippetView
+ handler so that it accepts
+an 
+id
+ query string parameter from the user like so:
+Method
+Pattern
+Handler
+Action
+ANY
+/
+home
+Display the home page
+ANY
+/snippet/view?id=1
+snippetView
+Display a specific snippet
+POST
+/snippet/create
+snippetCreate
+Create a new snippet
+Later we’ll use this 
+id
+ parameter to select a specific snippet from a database and show it to
+the user. But for now, we’ll just read the value of the 
+id
+ parameter and interpolate it with a
+placeholder response.
+To make this work we’ll need to update the 
+snippetView
+ handler function to do two things:
+1
+. 
+It needs to retrieve the value of the 
+id
+ parameter from the URL query string, which we can
+do using the 
+r.URL.Query().Get()
+ method. This will always return a string value for a
+parameter, or the empty string 
+""
+ if no matching parameter exists.
+2
+. 
+Because the 
+id
+ parameter is untrusted user input, we should validate it to make sure it’s
+sane and sensible. For the purpose of our Snippetbox application, we want to check that
+it contains a positive integer value. We can do this by trying to convert the string value to
+an integer with the 
+strconv.Atoi()
+ function, and then checking the value is greater than
+zero.
+Here’s how:File: main.go
+package
+ 
+main
+import
+ 
+(
+    
+"fmt"
+ 
+// New import
+    
+"log"
+    
+"net/http"
+    
+"strconv"
+ 
+// New import
+)
+...
+func
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// Extract the value of the id parameter from the query string and try to
+    
+// convert it to an integer using the strconv.Atoi() function. If it can't
+    
+// be converted to an integer, or the value is less than 1, we return a 404 page
+    
+// not found response.
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+URL
+.
+Query
+(
+)
+.
+Get
+(
+"id"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+||
+ 
+id
+ 
+<
+ 
+1
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+// Use the fmt.Fprintf() function to interpolate the id value with our response
+    
+// and write it to the http.ResponseWriter.
+    
+fmt
+.
+Fprintf
+(
+w
+,
+ 
+"Display a specific snippet with ID %d..."
+,
+ 
+id
+)
+}
+...
+Let’s try this out.
+Restart the application, and try visiting a URL like
+http://localhost:4000/snippet/view?id=123
+. You should see a response which looks like
+this:You might also like to try visiting some URLs which have invalid values for the 
+id
+ parameter,
+or no parameter at all. For instance:
+http://localhost:4000/snippet/view
+http://localhost:4000/snippet/view?id=-1
+http://localhost:4000/snippet/view?id=foo
+For all these requests you should get a 
+404 page not found
+ response.
+The io.writer interface
+The code above introduced another new thing behind-the-scenes. If you take a look at the
+documentation for the 
+fmt.Fprintf()
+ function you’ll notice that it takes an 
+io.Writer
+ as the
+first parameter…
+func
+ 
+Fprintf
+(
+w
+ 
+io
+.
+Writer
+,
+ 
+format
+ 
+string
+,
+ 
+a
+ 
+...
+any
+)
+ 
+(
+n
+ 
+int
+,
+ 
+err
+ 
+error
+)
+…but we passed it our 
+http.ResponseWriter
+ object instead — and it worked fine.
+We’re able to do this because the 
+io.Writer
+ type is an 
+interface
+, and the
+http.ResponseWriter
+ object 
+satisfies the interface
+ because it has a 
+w.Write()
+ method.If you’re new to Go, then the 
+concept of interfaces
+ can be a bit confusing and I don’t want to
+get too hung up on it right now. It’s enough to know that — in practice — anywhere you see an
+io.Writer
+ parameter it’s OK to pass in your 
+http.ResponseWriter
+ object. Whatever is being
+written will subsequently be sent as the body of the HTTP response.Chapter 2.6.
+Project structure and organization
+Before we add any more code to our 
+main.go
+ file it’s a good time to think how to organize and
+structure this project.
+It’s important to explain upfront that there’s no single right — or even recommended — way
+to structure web applications in Go. And that’s both good and bad. It means that you have
+freedom and flexibility over how you organize your code, but it’s also easy to get stuck down
+a rabbit-hole of uncertainty when trying to decide what the best structure should be.
+As you gain experience with Go, you’ll get a feel for which patterns work well for you in
+different situations. But as a starting point, the best advice I can give you is 
+don’t over-
+complicate things
+. Try hard to add structure and complexity only when it’s demonstrably
+needed.
+For this project we’ll implement an outline structure which follows a 
+popular
+ and 
+tried-and-
+tested
+ approach. It’s a solid starting point, and you should be able to reuse the general
+structure in a wide variety of projects.
+If you’re following along, make sure that you’re in the root of your project repository and run
+the following commands:
+$ cd $HOME/code/snippetbox
+$ rm main.go
+$ mkdir -p cmd/web internal ui/html ui/static
+$ touch cmd/web/main.go
+$ touch cmd/web/handlers.go
+The structure of your project repository should now look like this:Let’s take a moment to discuss what each of these directories will be used for.
+The 
+cmd
+ directory will contain the 
+application-specific
+ code for the executable applications
+in the project. For now we’ll have just one executable application — the web application —
+which will live under the 
+cmd/web
+ directory.
+The 
+internal
+ directory will contain the ancillary 
+non-application-specific
+ code used in the
+project. We’ll use it to hold potentially reusable code like validation helpers and the SQL
+database models for the project.
+The 
+ui
+ directory will contain the 
+user-interface assets
+ used by the web application.
+Specifically, the 
+ui/html
+ directory will contain HTML templates, and the 
+ui/static
+directory will contain static files (like CSS and images).
+So why are we using this structure?
+There are two big benefits:
+1
+. 
+It gives a clean separation between Go and non-Go assets. All the Go code we write willlive exclusively under the 
+cmd
+ and 
+internal
+ directories, leaving the project root free to
+hold non-Go assets like UI files, makefiles and module definitions (including our 
+go.mod
+file). This can make things easier to manage when it comes to building and deploying your
+application in the future.
+2
+. 
+It scales really nicely if you want to add another executable application to your project.
+For example, you might want to add a CLI (Command Line Interface) to automate some
+administrative tasks in the future. With this structure, you could create this CLI application
+under 
+cmd/cli
+ and it will be able to import and reuse all the code you’ve written under
+the 
+internal
+ directory.
+Refactoring your existing code
+Let’s quickly port the code we’ve already written to use this new structure.
+File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"log"
+    
+"net/http"
+)
+func
+ 
+main
+(
+)
+ 
+{
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+snippetCreate
+)
+    
+log
+.
+Print
+(
+"Starting server on :4000"
+)
+    
+err
+ 
+:=
+ 
+http
+.
+ListenAndServe
+(
+":4000"
+,
+ 
+mux
+)
+    
+log
+.
+Fatal
+(
+err
+)
+}File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"fmt"
+    
+"net/http"
+    
+"strconv"
+)
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Hello from Snippetbox"
+)
+)
+}
+func
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+URL
+.
+Query
+(
+)
+.
+Get
+(
+"id"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+||
+ 
+id
+ 
+<
+ 
+1
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+fmt
+.
+Fprintf
+(
+w
+,
+ 
+"Display a specific snippet with ID %d..."
+,
+ 
+id
+)
+}
+func
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+Method
+ 
+!=
+ 
+http
+.
+MethodPost
+ 
+{
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Allow"
+,
+ 
+http
+.
+MethodPost
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Method Not Allowed"
+,
+ 
+http
+.
+StatusMethodNotAllowed
+)
+        
+return
+    
+}
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Create a new snippet..."
+)
+)
+}
+So now our web application consists of 
+multiple Go source code files
+ under the 
+cmd/web
+directory. To run these, we can use the 
+go run
+ command like so:
+$ cd $HOME/code/snippetbox
+$ go run ./cmd/web
+2022/01/29 12:02:26 Starting server on :4000
+Additional information
+The internal directory
+It’s important to point out that the directory name 
+internal
+ carries a special meaning and
+behavior in Go: any packages which live under this directory can only be imported by codeinside the parent of the 
+internal
+ directory
+. In our case, this means that any packages which
+live in 
+internal
+ can only be imported by code inside our 
+snippetbox
+ project directory.
+Or, looking at it the other way, this means that any packages under 
+internal
+ 
+cannot be
+imported by code outside of our project
+.
+This is useful because it prevents other codebases from importing and relying on the
+(potentially unversioned and unsupported) packages in our 
+internal
+ directory — even if the
+project code is publicly available somewhere like GitHub.Chapter 2.7.
+HTML templating and inheritance
+Let’s inject a bit of life into the project and develop a proper home page for our Snippetbox
+web application. Over the next couple of chapters we’ll work towards creating a page which
+looks like this:
+Let’s start by creating a 
+template file
+ at 
+ui/html/pages/home.tmpl
+ which contains the HTML
+content for our home page. Like so:
+$ cd $HOME/code/snippetbox
+$ mkdir ui/html/pages
+$ touch ui/html/pages/home.tmplFile: ui/html/pages/home.tmpl
+<!doctype html>
+<
+html
+ 
+lang
+=
+'en'
+>
+    
+<
+head
+>
+        
+<
+meta
+ 
+charset
+=
+'utf-8'
+>
+        
+<
+title
+>
+Home - Snippetbox
+<
+/
+title
+>
+    
+<
+/
+head
+>
+    
+<
+body
+>
+        
+<
+header
+>
+            
+<
+h1
+>
+<
+a
+ 
+href
+=
+'/'
+>
+Snippetbox
+<
+/
+a
+>
+<
+/
+h1
+>
+        
+<
+/
+header
+>
+        
+<
+main
+>
+            
+<
+h2
+>
+Latest Snippets
+<
+/
+h2
+>
+            
+<
+p
+>
+There's nothing to see here yet!
+<
+/
+p
+>
+        
+<
+/
+main
+>
+        
+<
+footer
+>
+Powered by 
+<
+a
+ 
+href
+=
+'https://golang.org/'
+>
+Go
+<
+/
+a
+>
+<
+/
+footer
+>
+    
+<
+/
+body
+>
+<
+/
+html
+>
+Note:
+ The 
+.tmpl
+ extension doesn’t convey any special meaning or behavior here. I’ve
+only chosen this extension because it’s a nice way of making it clear that the file
+contains a Go template when you’re browsing a list of files. But, if you want, you could
+use the extension 
+.html
+ instead (which may make your text editor recognize the file as
+HTML for the purpose of syntax highlighting or autocompletion) — or you could even
+use a ‘double extension’ like 
+.tmpl.html
+. The choice is yours, but we’ll stick to using
+.tmpl
+ for our templates throughout this book.
+Now that we’ve created a template file containing the HTML markup for the home page, the
+next question is 
+how do we get our 
+home
+ handler to render it?
+For this we need to use Go’s 
+html/template
+ package, which provides a family of functions for
+safely parsing and rendering HTML templates. We can use the functions in this package to
+parse
+ the template file and then 
+execute
+ the template.
+I’ll demonstrate. Open the 
+cmd/web/handlers.go
+ file and add the following code:File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"fmt"
+    
+"html/template"
+ 
+// New import
+    
+"log"
+           
+// New import
+    
+"net/http"
+    
+"strconv"
+)
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+// Use the template.ParseFiles() function to read the template file into a
+    
+// template set. If there's an error, we log the detailed error message and use
+    
+// the http.Error() function to send a generic 500 Internal Server Error
+    
+// response to the user.
+    
+ts
+,
+ 
+err
+ 
+:=
+ 
+template
+.
+ParseFiles
+(
+"./ui/html/pages/home.tmpl"
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+log
+.
+Print
+(
+err
+.
+Error
+(
+)
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Internal Server Error"
+,
+ 
+500
+)
+        
+return
+    
+}
+    
+// We then use the Execute() method on the template set to write the
+    
+// template content as the response body. The last parameter to Execute()
+    
+// represents any dynamic data that we want to pass in, which for now we'll
+    
+// leave as nil.
+    
+err
+ 
+=
+ 
+ts
+.
+Execute
+(
+w
+,
+ 
+nil
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+log
+.
+Print
+(
+err
+.
+Error
+(
+)
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Internal Server Error"
+,
+ 
+500
+)
+    
+}
+}
+...
+It’s important to point out that the file path that you pass to the 
+template.ParseFiles()
+function must either be relative to your current working directory, or an absolute path. In the
+code above I’ve made the path relative to the root of the project directory.
+So, with that said, make sure you’re in the root of your project directory and restart the
+application:
+$ cd $HOME/code/snippetbox
+$ go run ./cmd/web
+2022/01/29 12:06:02 Starting server on :4000
+Then open 
+http://localhost:4000
+ in your web browser. You should find that the HTML
+homepage is shaping up nicely.Template composition
+As we add more pages to this web application there will be some shared, boilerplate, HTML
+markup that we want to include on every page — like the header, navigation and metadata
+inside the 
+<head>
+ HTML element.
+To save us typing and prevent duplication, it’s a good idea to create a 
+base
+ (or 
+master
+)
+template which contains this shared content, which we can then 
+compose
+ with the page-
+specific markup for the individual pages.
+Go ahead and create a new 
+ui/html/base.tmpl
+ file…
+$ touch ui/html/base.tmpl
+And add the following markup (which we want to appear on every page):File: ui/html/base.tmpl
+{{define "base"}}
+<!doctype html>
+<
+html
+ 
+lang
+=
+'en'
+>
+    
+<
+head
+>
+        
+<
+meta
+ 
+charset
+=
+'utf-8'
+>
+        
+<
+title
+>
+{{template "title" .}} - Snippetbox
+<
+/
+title
+>
+    
+<
+/
+head
+>
+    
+<
+body
+>
+        
+<
+header
+>
+            
+<
+h1
+>
+<
+a
+ 
+href
+=
+'/'
+>
+Snippetbox
+<
+/
+a
+>
+<
+/
+h1
+>
+        
+<
+/
+header
+>
+        
+<
+main
+>
+            {{template "main" .}}
+        
+<
+/
+main
+>
+        
+<
+footer
+>
+Powered by 
+<
+a
+ 
+href
+=
+'https://golang.org/'
+>
+Go
+<
+/
+a
+>
+<
+/
+footer
+>
+    
+<
+/
+body
+>
+<
+/
+html
+>
+{{end}}
+Hopefully this feels familiar if you’ve used templating in other languages before. It’s
+essentially just regular HTML with some extra actions in double curly braces.
+Here we’re using the 
+{{define "base"}}...{{end}}
+ action to define a distinct 
+named
+template
+ called 
+base
+, which contains the content we want to appear on every page.
+Inside this we use the 
+{{template "title" .}}
+ and 
+{{template "main" .}}
+ actions to
+denote that we want to 
+invoke
+ other named templates (called 
+title
+ and 
+main
+) at a particular
+point in the HTML.
+Note:
+ If you’re wondering, the dot at the end of the 
+{{template "title" .}}
+ action
+represents any dynamic data that you want to pass to the invoked template. We’ll talk
+more about this later in the book.
+Now let’s go back to the 
+ui/html/pages/home.tmpl
+ file and update it to define 
+title
+ and
+main
+ named templates containing the specific content for the home page.
+File: ui/html/pages/home.tmpl
+{{define "title"}}Home{{end}}
+{{define "main"}}
+    
+<
+h2
+>
+Latest Snippets
+<
+/
+h2
+>
+    
+<
+p
+>
+There's nothing to see here yet!
+<
+/
+p
+>
+{{end}}
+Once that’s done, the next step is to update the code in your 
+home
+ handler so that it parses
+both
+ template files, like so:File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+// Initialize a slice containing the paths to the two files. It's important
+    
+// to note that the file containing our base template must be the *first*
+    
+// file in the slice.
+    
+files
+ 
+:=
+ 
+[
+]
+string
+{
+        
+"./ui/html/base.tmpl"
+,
+        
+"./ui/html/pages/home.tmpl"
+,
+    
+}
+    
+// Use the template.ParseFiles() function to read the files and store the
+    
+// templates in a template set. Notice that we can pass the slice of file
+    
+// paths as a variadic parameter?
+    
+ts
+,
+ 
+err
+ 
+:=
+ 
+template
+.
+ParseFiles
+(
+files
+...
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+log
+.
+Print
+(
+err
+.
+Error
+(
+)
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Internal Server Error"
+,
+ 
+500
+)
+        
+return
+    
+}
+    
+// Use the ExecuteTemplate() method to write the content of the "base" 
+    
+// template as the response body.
+    
+err
+ 
+=
+ 
+ts
+.
+ExecuteTemplate
+(
+w
+,
+ 
+"base"
+,
+ 
+nil
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+log
+.
+Print
+(
+err
+.
+Error
+(
+)
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Internal Server Error"
+,
+ 
+500
+)
+    
+}
+}
+...
+So now, instead of containing HTML directly, our template set contains 3 named templates —
+base
+, 
+title
+ and 
+main
+. We use the 
+ExecuteTemplate()
+ method to tell Go that we specifically
+want to respond using the content of the 
+base
+ template (which in turn invokes our 
+title
+ and
+main
+ templates).
+Feel free to restart the server and give this a try. You should find that it renders the same
+output as before (although there will be some extra whitespace in the HTML source where the
+actions are).
+Embedding partials
+For some applications you might want to break out certain bits of HTML into 
+partials
+ that can
+be reused in different pages or layouts. To illustrate, let’s create a partial containing the
+primary navigation bar for our web application.Create a new 
+ui/html/partials/nav.tmpl
+ file containing a named template called 
+"nav"
+, like
+so:
+$ mkdir ui/html/partials
+$ touch ui/html/partials/nav.tmpl
+File: ui/html/partials/nav.tmpl
+{{define "nav"}}
+ 
+<
+nav
+>
+    
+<
+a
+ 
+href
+=
+'/'
+>
+Home
+<
+/
+a
+>
+<
+/
+nav
+>
+{{end}}
+Then update the 
+base
+ template so that it invokes the navigation partial using the
+{{template "nav" .}}
+ action:
+File: ui/html/base.tmpl
+{{define "base"}}
+<!doctype html>
+<
+html
+ 
+lang
+=
+'en'
+>
+    
+<
+head
+>
+        
+<
+meta
+ 
+charset
+=
+'utf-8'
+>
+        
+<
+title
+>
+{{template "title" .}} - Snippetbox
+<
+/
+title
+>
+    
+<
+/
+head
+>
+    
+<
+body
+>
+        
+<
+header
+>
+            
+<
+h1
+>
+<
+a
+ 
+href
+=
+'/'
+>
+Snippetbox
+<
+/
+a
+>
+<
+/
+h1
+>
+        
+<
+/
+header
+>
+        
+<!--
+ Invoke the navigation template 
+-->
+        {{template "nav" .}}
+        
+<
+main
+>
+            {{template "main" .}}
+        
+<
+/
+main
+>
+        
+<
+footer
+>
+Powered by 
+<
+a
+ 
+href
+=
+'https://golang.org/'
+>
+Go
+<
+/
+a
+>
+<
+/
+footer
+>
+    
+<
+/
+body
+>
+<
+/
+html
+>
+{{end}}
+Finally, we need to update the 
+home
+ handler to include the new 
+ui/html/partials/nav.tmpl
+file when parsing the template files:File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+http
+.
+NotFound
+(
+w
+,
+ 
+r
+)
+        
+return
+    
+}
+    
+// Include the navigation partial in the template files.
+    
+files
+ 
+:=
+ 
+[
+]
+string
+{
+        
+"./ui/html/base.tmpl"
+,
+        
+"./ui/html/partials/nav.tmpl"
+,
+        
+"./ui/html/pages/home.tmpl"
+,
+    
+}
+    
+ts
+,
+ 
+err
+ 
+:=
+ 
+template
+.
+ParseFiles
+(
+files
+...
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+log
+.
+Print
+(
+err
+.
+Error
+(
+)
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Internal Server Error"
+,
+ 
+500
+)
+        
+return
+    
+}
+    
+err
+ 
+=
+ 
+ts
+.
+ExecuteTemplate
+(
+w
+,
+ 
+"base"
+,
+ 
+nil
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+log
+.
+Print
+(
+err
+.
+Error
+(
+)
+)
+        
+http
+.
+Error
+(
+w
+,
+ 
+"Internal Server Error"
+,
+ 
+500
+)
+    
+}
+}
+...
+Once you restart the server, the 
+base
+ template should now invoke the 
+nav
+ template and your
+home page should look like this:Additional information
+The block action
+In the code above we’ve used the 
+{{template}}
+ action to invoke one template from another.
+But Go also provides a 
+{{block}}...{{end}}
+ action which you can use instead. This acts like
+the 
+{{template}}
+ action, except it allows you to specify some default content if the template
+being invoked 
+doesn’t exist in the current template set
+.
+In the context of a web application, this is useful when you want to provide some default
+content (such as a sidebar) which individual pages can override on a case-by-case basis if they
+need to.
+Syntactically you use it like this:
+{{define "base"}}
+    
+<
+h1
+>
+An example template
+<
+/
+h1
+>
+    {{block "sidebar" .}}
+        
+<
+p
+>
+My default sidebar content
+<
+/
+p
+>
+    {{end}}
+{{end}}But — if you want — you don’t 
+need
+ to include any default content between the 
+{{block}}
+and 
+{{end}}
+ actions. In that case, the invoked template acts like it’s ‘optional’. If the template
+exists in the template set, then it will be rendered. But if it doesn’t, then nothing will be
+displayed.
+Embedding files
+Go also provides the 
+embed
+ package which makes it possible to 
+embed files into your Go
+program itself rather than reading them from disk
+.
+For now, reading our template files from disk works fine and it’s conceptually simpler than
+using the 
+embed
+ package, but we’ll revisit this and explain how to use the 
+embed
+ functionality
+as an alternative later in the book.Chapter 2.8.
+Serving static files
+Now let’s improve the look and feel of the home page by adding some static CSS and image
+files to our project, along with a tiny bit of JavaScript to highlight the active navigation item.
+If you’re following along, you can grab the necessary files and extract them into the
+ui/static
+ folder that we made earlier with the following commands:
+$ cd $HOME/code/snippetbox
+$ curl https://www.alexedwards.net/static/sb-v2.tar.gz | tar -xvz -C ./ui/static/
+The contents of your 
+ui/static
+ directory should now look like this:
+The http.Fileserver handler
+Go’s 
+net/http
+ package ships with a built-in 
+http.FileServer
+ handler which you can use to
+serve files over HTTP from a specific directory. Let’s add a new route to our application so that
+all requests which begin with 
+"/static/"
+ are handled using this, like so:Method
+Pattern
+Handler
+Action
+ANY
+/
+home
+Display the home page
+ANY
+/snippet/view?id=1
+snippetView
+Display a specific snippet
+POST
+/snippet/create
+snippetCreate
+Create a new snippet
+ANY
+/static/
+http.FileServer
+Serve a specific static file
+Remember:
+ The pattern 
+"/static/"
+ is a subtree path pattern, so it acts a bit like there
+is a wildcard at the end.
+To create a new 
+http.FileServer
+ handler, we need to use the 
+http.FileServer()
+ function
+like this:
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+When this handler receives a request, it will remove the leading slash from the URL path and
+then search the 
+./ui/static
+ directory for the corresponding file to send to the user.
+So, for this to work correctly, we must strip the leading 
+"/static"
+ from the URL path 
+before
+passing it to 
+http.FileServer
+. Otherwise it will be looking for a file which doesn’t exist and
+the user will receive a 
+404 page not found
+ response. Fortunately Go includes a
+http.StripPrefix()
+ helper specifically for this task.
+Open your 
+main.go
+ file and add the following code, so that the file ends up looking like this:File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"log"
+    
+"net/http"
+)
+func
+ 
+main
+(
+)
+ 
+{
+    
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+    
+// Create a file server which serves files out of the "./ui/static" directory.
+    
+// Note that the path given to the http.Dir function is relative to the project
+    
+// directory root.
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+// Use the mux.Handle() function to register the file server as the handler for
+    
+// all URL paths that start with "/static/". For matching paths, we strip the
+    
+// "/static" prefix before the request reaches the file server.
+    
+mux
+.
+Handle
+(
+"/static/"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+// Register the other application routes as normal.
+    
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+home
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/view"
+,
+ 
+snippetView
+)
+    
+mux
+.
+HandleFunc
+(
+"/snippet/create"
+,
+ 
+snippetCreate
+)
+    
+log
+.
+Print
+(
+"Starting server on :4000"
+)
+    
+err
+ 
+:=
+ 
+http
+.
+ListenAndServe
+(
+":4000"
+,
+ 
+mux
+)
+    
+log
+.
+Fatal
+(
+err
+)
+}
+Once that’s complete, restart the application and open 
+http://localhost:4000/static/
+ in
+your browser. You should see a navigable directory listing of the 
+ui/static
+ folder which looks
+like this:Feel free to have a play around and browse through the directory listing to view individual
+files. For example, if you navigate to 
+http://localhost:4000/static/css/main.css
+ you
+should see the CSS file appear in your browser like so:
+Using the static files
+With the file server working properly, we can now update the 
+ui/html/base.tmpl
+ file to make
+use of the static files:
+File: ui/html/base.tmpl
+{{define "base"}}
+<!doctype html>
+<
+html
+ 
+lang
+=
+'en'
+>
+    
+<
+head
+>
+        
+<
+meta
+ 
+charset
+=
+'utf-8'
+>
+        
+<
+title
+>
+{{template "title" .}} - Snippetbox
+<
+/
+title
+>
+         
+<!--
+ Link to the CSS stylesheet and favicon 
+-->
+        
+<
+link
+ 
+rel
+=
+'stylesheet'
+ 
+href
+=
+'/static/css/main.css'
+>
+        
+<
+link
+ 
+rel
+=
+'shortcut icon'
+ 
+href
+=
+'/static/img/favicon.ico'
+ 
+type
+=
+'image/x-icon'
+>
+        
+<!--
+ Also link to some fonts hosted by Google 
+-->
+        
+<
+link
+ 
+rel
+=
+'stylesheet'
+ 
+href
+=
+'https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700'
+>
+    
+<
+/
+head
+>
+    
+<
+body
+>
+        
+<
+header
+>
+            
+<
+h1
+>
+<
+a
+ 
+href
+=
+'/'
+>
+Snippetbox
+<
+/
+a
+>
+<
+/
+h1
+>
+        
+<
+/
+header
+>
+        {{template "nav" .}}
+        
+<
+main
+>
+            {{template "main" .}}
+        
+<
+/
+main
+>
+        
+<
+footer
+>
+Powered by 
+<
+a
+ 
+href
+=
+'https://golang.org/'
+>
+Go
+<
+/
+a
+>
+<
+/
+footer
+>
+         
+<!--
+ And include the JavaScript file 
+-->
+        
+<
+script
+ 
+src
+=
+"/static/js/main.js"
+ 
+type
+=
+"text/javascript"
+>
+<
+/
+script
+>
+    
+<
+/
+body
+>
+<
+/
+html
+>
+{{end}}
+Make sure you save the changes, then visit 
+http://localhost:4000
+. Your home page should
+now look like this:Additional information
+Features and functions
+Go’s file server has a few really nice features that are worth mentioning:
+It sanitizes all request paths by running them through the 
+path.Clean()
+ function before
+searching for a file. This removes any 
+.
+ and 
+..
+ elements from the URL path, which helps to
+stop directory traversal attacks. This feature is particularly useful if you’re using the
+fileserver in conjunction with a router that doesn’t automatically sanitize URL paths.
+Range requests
+ are fully supported. This is great if your application is serving large files
+and you want to support resumable downloads. You can see this functionality in action if
+you use curl to request bytes 100-199 of the 
+logo.png
+ file, like so:$ curl -i -H "Range: bytes=100-199" --output - http://localhost:4000/static/img/logo.png
+HTTP/1.1 206 Partial Content
+Accept-Ranges: bytes
+Content-Length: 100
+Content-Range: bytes 100-199/1075
+Content-Type: image/png
+Last-Modified: Thu, 04 May 2017 13:07:52 GMT
+Date: Sat, 29 Jan 2022 14:33:59 GMT
+[binary data]
+The 
+Last-Modified
+ and 
+If-Modified-Since
+ headers are transparently supported. If a file
+hasn’t changed since the user last requested it, then 
+http.FileServer
+ will send a
+304 Not Modified
+ status code instead of the file itself. This helps reduce latency and
+processing overhead for both the client and server.
+The 
+Content-Type
+ is automatically set from the file extension using the
+mime.TypeByExtension()
+ function. You can add your own custom extensions and content
+types using the 
+mime.AddExtensionType()
+ function if necessary.
+Performance
+In the code above we’ve set up our file server so that it serves files out of the 
+./ui/static
+directory on your hard disk.
+But it’s important to note that, once the application is up-and-running, 
+http.FileServer
+probably won’t be reading these files from disk. Both 
+Windows
+ and 
+Unix-based
+ operating
+systems cache recently-used files in RAM, so (for frequently-served files at least) it’s likely that
+http.FileServer
+ will be serving them from RAM rather than making the 
+relatively slow
+round-trip to your hard disk.
+Serving single files
+Sometimes you might want to serve a single file from within a handler. For this there’s the
+http.ServeFile()
+ function, which you can use like so:
+func
+ 
+downloadHandler
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+http
+.
+ServeFile
+(
+w
+,
+ 
+r
+,
+ 
+"./ui/static/file.zip"
+)
+}
+Warning:
+ 
+http.ServeFile()
+ does not automatically sanitize the file path. If you’re
+constructing a file path from untrusted user input, to avoid directory traversal attacks
+you 
+must
+ sanitize the input with 
+filepath.Clean()
+ before using it.Disabling directory listings
+If you want to disable directory listings there are a few different approaches you can take.
+The simplest way? Add a blank 
+index.html
+ file to the specific directory that you want to
+disable listings for. This will then be served instead of the directory listing, and the user will
+get a 
+200 OK
+ response with no body. If you want to do this for all directories under
+./ui/static
+ you can use the command:
+$ find ./ui/static -type d -exec touch {}/index.html \;
+A more complicated (but arguably better) solution is to create a custom implementation of
+http.FileSystem
+, and have it return an 
+os.ErrNotExist
+ error for any directories. A full
+explanation and sample code can be found in 
+this blog post
+.Chapter 2.9.
+The http.Handler interface
+Before we go any further there’s a little theory that we should cover. It’s a bit complicated, so
+if you find this chapter hard-going don’t worry. Carry on with the application build and circle
+back to it later once you’re more familiar with Go.
+In the previous chapters I’ve thrown around the term 
+handler
+ without explaining what it truly
+means. Strictly speaking, what we mean by handler is 
+an object which satisfies the
+http.Handler
+ interface
+:
+type
+ 
+Handler
+ 
+interface
+ 
+{
+    
+ServeHTTP
+(
+ResponseWriter
+,
+ 
+*
+Request
+)
+}
+In simple terms, this basically means that to be a handler an object 
+must
+ have a 
+ServeHTTP()
+method with the exact signature:
+ServeHTTP
+(
+http
+.
+ResponseWriter
+,
+ 
+*
+http
+.
+Request
+)
+So in its simplest form a handler might look something like this:
+type
+ 
+home
+ 
+struct
+ 
+{
+}
+func
+ 
+(
+h
+ 
+*
+home
+)
+ 
+ServeHTTP
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"This is my home page"
+)
+)
+}
+Here we have an object (in this case it’s a 
+home
+ struct, but it could equally be a string or
+function or anything else), and we’ve implemented a method with the signature
+ServeHTTP(http.ResponseWriter, *http.Request)
+ on it. That’s all we need to make a
+handler.
+You could then register this with a servemux using the 
+Handle
+ method like so:
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+mux
+.
+Handle
+(
+"/"
+,
+ 
+&
+home
+{
+}
+)
+When this servemux receives a HTTP request for 
+"/"
+, it will then call the 
+ServeHTTP()
+ method
+of the 
+home
+ struct — which in turn writes the HTTP response.Handler functions
+Now, creating an object just so we can implement a 
+ServeHTTP()
+ method on it is long-winded
+and a bit confusing. Which is why in practice it’s far more common to write your handlers as a
+normal function (like we have been so far). For example:
+func
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"This is my home page"
+)
+)
+}
+But this 
+home
+ function is just a normal function; it doesn’t have a 
+ServeHTTP()
+ method. So in
+itself it 
+isn’t
+ a handler.
+Instead we can 
+transform
+ it into a handler using the 
+http.HandlerFunc()
+ adapter, like so:
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+mux
+.
+Handle
+(
+"/"
+,
+ 
+http
+.
+HandlerFunc
+(
+home
+)
+)
+The 
+http.HandlerFunc()
+ adapter works by automatically adding a 
+ServeHTTP()
+ method to
+the 
+home
+ function. When executed, this 
+ServeHTTP()
+ method then simply 
+calls the content of
+the original 
+home
+ function
+. It’s a roundabout but convenient way of coercing a normal function
+into satisfying the 
+http.Handler
+ interface.
+Throughout this project so far we’ve been using the 
+HandleFunc()
+ method to register our
+handler functions with the servemux. This is just some syntactic sugar that transforms a
+function to a handler and registers it in one step, instead of having to do it manually. The
+code above is functionality equivalent to this:
+mux
+ 
+:=
+ 
+http
+.
+NewServeMux
+(
+)
+mux
+.
+HandleFunc
+(
+"/"
+,
+ 
+home
+)
+Chaining handlers
+The eagle-eyed of you might have noticed something interesting right at the start of this
+project. The 
+http.ListenAndServe()
+ function takes a 
+http.Handler
+ object as the second
+parameter…
+func
+ 
+ListenAndServe
+(
+addr
+ 
+string
+,
+ 
+handler
+ 
+Handler
+)
+ 
+error
+… but we’ve been passing in a servemux.We were able to do this because the servemux also has a 
+ServeHTTP()
+ method, meaning that
+it too satisfies the 
+http.Handler
+ interface.
+For me it simplifies things to think of the servemux as just being a 
+special kind of handler
+,
+which instead of providing a response itself passes the request on to a second handler. This
+isn’t as much of a leap as it might first sound. Chaining handlers together is a very common
+idiom in Go, and something that we’ll do a lot of later in this project.
+In fact, what exactly is happening is this: When our server receives a new HTTP request, it calls
+the servemux’s 
+ServeHTTP()
+ method. This looks up the relevant handler based on the
+request URL path, and in turn calls that handler’s 
+ServeHTTP()
+ method. You can think of a Go
+web application as a 
+chain of 
+ServeHTTP()
+ methods being called one after another
+.
+Requests are handled concurrently
+There is one more thing that’s really important to point out: 
+all incoming HTTP requests are
+served in their own goroutine
+. For busy servers, this means it’s very likely that the code in or
+called by your handlers will be running concurrently. While this helps make Go blazingly fast,
+the downside is that you need to be aware of (and protect against) 
+race conditions
+ when
+accessing shared resources from your handlers.

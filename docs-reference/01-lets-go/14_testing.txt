@@ -1,0 +1,7852 @@
+Chapter 14.
+Testing
+And so we finally come to the topic of testing.
+Like structuring and organizing your application code, there’s no single ‘right’ way to
+structure and organize your tests in Go. But there 
+are
+ some conventions, patterns and good-
+practices that you can follow.
+In this section we’re going to add tests for a selection of the code in our application, with the
+goal of demonstrating the general syntax for creating tests and illustrating some patterns
+that you can reuse in a wide-variety of applications.
+You’ll learn:
+How to create and run table-driven 
+unit tests and sub-tests
+ in Go.
+How to unit 
+test your HTTP handlers
+ and middleware.
+How to perform 
+‘end-to-end’ testing
+ of your web application routes, middleware and
+handlers.
+How to 
+create mocks
+ of your database models and use them in unit tests.
+A pattern for testing CSRF-protected 
+HTML form submissions
+.
+How to use a test instance of MySQL to perform 
+integration tests
+.
+How to easily calculate and profile 
+code coverage
+ for your tests.Chapter 14.1.
+Unit testing and sub-tests
+In this chapter we’ll create a unit test to make sure that our 
+humanDate()
+ function (which we
+made back in the 
+custom template functions
+ chapter) is outputting 
+time.Time
+ values in the
+exact format that we want.
+If you can’t remember, the 
+humanDate()
+ function looks like this:
+File: cmd/web/templates.go
+package
+ 
+main
+...
+func
+ 
+humanDate
+(
+t
+ 
+time
+.
+Time
+)
+ 
+string
+ 
+{
+    
+return
+ 
+t
+.
+UTC
+(
+)
+.
+Format
+(
+"02 Jan 2006 at 15:04"
+)
+}
+...
+The reason that I want to start by testing this is because it’s a simple function. We can explore
+the basic syntax and patterns for writing tests without getting too caught-up in 
+the
+functionality
+ that we’re testing.
+Creating a unit test
+Let’s jump straight in and create a 
+unit test
+ for this function.
+In Go, its standard practice to create your tests in 
+*_test.go
+ files which live directly alongside
+the code that you’re testing. So, in this case, the first thing that we’re going to do is create a
+new 
+cmd/web/templates_test.go
+ file to hold the test:
+$ touch cmd/web/templates_test.go
+And then we can create a new unit test for the 
+humanDate
+ function like so:File: cmd/web/templates_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"testing"
+    
+"time"
+)
+func
+ 
+TestHumanDate
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Initialize a new time.Time object and pass it to the humanDate function.
+    
+tm
+ 
+:=
+ 
+time
+.
+Date
+(
+2022
+,
+ 
+3
+,
+ 
+17
+,
+ 
+10
+,
+ 
+15
+,
+ 
+0
+,
+ 
+0
+,
+ 
+time
+.
+UTC
+)
+    
+hd
+ 
+:=
+ 
+humanDate
+(
+tm
+)
+    
+// Check that the output from the humanDate function is in the format we
+    
+// expect. If it isn't what we expect, use the t.Errorf() function to
+    
+// indicate that the test has failed and log the expected and actual
+    
+// values.
+    
+if
+ 
+hd
+ 
+!=
+ 
+"17 Mar 2022 at 10:15"
+ 
+{
+        
+t
+.
+Errorf
+(
+"got %q; want %q"
+,
+ 
+hd
+,
+ 
+"17 Mar 2022 at 10:15"
+)
+    
+}
+}
+This pattern is the basic one that you’ll use for nearly all tests that you write in Go. The
+important things to take away are:
+The test is just regular Go code, which calls the 
+humanDate()
+ function and checks that the
+result matches what we expect.
+Your unit tests are contained in a normal Go function with the signature
+func(*testing.T)
+.
+To be a valid unit test the name of this function 
+must
+ begin with the word 
+Test
+. Typically
+this is then followed by the name of the function, method or type that you’re testing to
+help make it obvious at a glance 
+what
+ is being tested.
+You can use the 
+t.Errorf()
+ function to mark a test as 
+failed
+ and log a descriptive message
+about the failure. It’s important to note that calling 
+t.Errorf()
+ 
+doesn’t stop execution of
+your test
+ — after you call it Go will continue executing any remaining test code as normal.
+Let’s try this out. Save the file, then use the 
+go test
+ command to run all the tests in our
+cmd/web
+ package like so:
+$ go test ./cmd/web
+ok      snippetbox.alexedwards.net/cmd/web    0.005s
+So, this is good stuff. The 
+ok
+ in this output indicates that all tests in the package (for now, only
+our 
+TestHumanDate()
+ test) passed without any problems.
+If you want more detail, you can see exactly which tests are being run by using the 
+-v
+ flag toget the 
+verbose
+ output:
+$ go test -v ./cmd/web
+=== RUN   TestHumanDate
+--- PASS: TestHumanDate (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web    0.007s
+Table-driven tests
+Let’s now expand our 
+TestHumanDate()
+ function to cover some additional 
+test cases
+.
+Specifically, we’re going to update it to also check that:
+1
+. 
+If the input to 
+humanDate()
+ is the 
+zero time
+, then it returns the empty string 
+""
+.
+2
+. 
+The output from the 
+humanDate()
+ function always uses the UTC time zone.
+In Go, an idiomatic way to run multiple test cases is to use 
+table-driven tests
+.
+Essentially, the idea behind table-driven tests is to create a ‘table’ of test cases containing the
+inputs and expected outputs, and to then loop over these, running each test case in a 
+sub-
+test
+. There are a few ways you could set this up, but a common approach is to define your test
+cases in an slice of anonymous structs.
+I’ll demonstrate:File: cmd/web/templates_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"testing"
+    
+"time"
+)
+func
+ 
+TestHumanDate
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Create a slice of anonymous structs containing the test case name,
+    
+// input to our humanDate() function (the tm field), and expected output
+    
+// (the want field).
+    
+tests
+ 
+:=
+ 
+[
+]
+struct
+ 
+{
+        
+name
+ 
+string
+        
+tm
+   
+time
+.
+Time
+        
+want
+ 
+string
+    
+}
+{
+        
+{
+            
+name
+:
+ 
+"UTC"
+,
+            
+tm
+:
+   
+time
+.
+Date
+(
+2022
+,
+ 
+3
+,
+ 
+17
+,
+ 
+10
+,
+ 
+15
+,
+ 
+0
+,
+ 
+0
+,
+ 
+time
+.
+UTC
+)
+,
+            
+want
+:
+ 
+"17 Mar 2022 at 10:15"
+,
+        
+}
+,
+        
+{
+            
+name
+:
+ 
+"Empty"
+,
+            
+tm
+:
+   
+time
+.
+Time
+{
+}
+,
+            
+want
+:
+ 
+""
+,
+        
+}
+,
+        
+{
+            
+name
+:
+ 
+"CET"
+,
+            
+tm
+:
+   
+time
+.
+Date
+(
+2022
+,
+ 
+3
+,
+ 
+17
+,
+ 
+10
+,
+ 
+15
+,
+ 
+0
+,
+ 
+0
+,
+ 
+time
+.
+FixedZone
+(
+"CET"
+,
+ 
+1
+*
+60
+*
+60
+)
+)
+,
+            
+want
+:
+ 
+"17 Mar 2022 at 09:15"
+,
+        
+}
+,
+    
+}
+    
+// Loop over the test cases.
+    
+for
+ 
+_
+,
+ 
+tt
+ 
+:=
+ 
+range
+ 
+tests
+ 
+{
+        
+// Use the t.Run() function to run a sub-test for each test case. The
+        
+// first parameter to this is the name of the test (which is used to
+        
+// identify the sub-test in any log output) and the second parameter is
+        
+// and anonymous function containing the actual test for each case.
+        
+t
+.
+Run
+(
+tt
+.
+name
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+            
+hd
+ 
+:=
+ 
+humanDate
+(
+tt
+.
+tm
+)
+            
+if
+ 
+hd
+ 
+!=
+ 
+tt
+.
+want
+ 
+{
+                
+t
+.
+Errorf
+(
+"got %q; want %q"
+,
+ 
+hd
+,
+ 
+tt
+.
+want
+)
+            
+}
+        
+}
+)
+    
+}
+}
+Note:
+ In the third test case we’re using CET (Central European Time) as the time zone,
+which is one hour ahead of UTC. So we want the output from 
+humanDate()
+ (in UTC) to be
+17 Mar 2022 at 09:15
+, not 
+17 Mar 2022 at 10:15
+.
+OK, let’s run this and see what happens:$ go test -v ./cmd/web
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+=== RUN   TestHumanDate/Empty
+    templates_test.go:44: got "01 Jan 0001 at 00:00"; want ""
+=== RUN   TestHumanDate/CET
+    templates_test.go:44: got "17 Mar 2022 at 10:15"; want "17 Mar 2022 at 09:15"
+--- FAIL: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+    --- FAIL: TestHumanDate/Empty (0.00s)
+    --- FAIL: TestHumanDate/CET (0.00s)
+FAIL
+FAIL    snippetbox.alexedwards.net/cmd/web      0.003s
+FAIL
+So here we can see the individual output for each of our sub-tests. As you might have
+guessed, our first test case passed but the 
+Empty
+ and 
+CET
+ 
+tests both failed. Notice how — for
+the failed test cases — we get the relevant failure message and filename and line number in
+the output?
+Let’s head back to our 
+humanDate()
+ function and update it to fix these two problems:
+File: cmd/web/templates.go
+package
+ 
+main
+...
+func
+ 
+humanDate
+(
+t
+ 
+time
+.
+Time
+)
+ 
+string
+ 
+{
+    
+// Return the empty string if time has the zero value.
+    
+if
+ 
+t
+.
+IsZero
+(
+)
+ 
+{
+        
+return
+ 
+""
+    
+}
+    
+// Convert the time to UTC before formatting it.
+    
+return
+ 
+t
+.
+UTC
+(
+)
+.
+Format
+(
+"02 Jan 2006 at 15:04"
+)
+}
+...
+And when you re-run the tests everything should now pass.
+$ go test -v ./cmd/web
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+=== RUN   TestHumanDate/Empty
+=== RUN   TestHumanDate/CET
+--- PASS: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+    --- PASS: TestHumanDate/Empty (0.00s)
+    --- PASS: TestHumanDate/CET (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.003sHelpers for test assertions
+As I mentioned briefly earlier in the book, over the next few chapters we’ll be writing a lot of
+test assertions
+ that are a variation of this pattern:
+if
+ 
+actualValue
+ 
+!=
+ 
+expectedValue
+ 
+{
+    
+t
+.
+Errorf
+(
+"got %v; want %v"
+,
+ 
+actualValue
+,
+ 
+expectedValue
+)
+}
+Let’s quickly abstract this code into a helper function.
+If you’re following along, go ahead and create a new 
+internal/assert
+ package:
+$ mkdir internal/assert
+$ touch internal/assert/assert.go
+And then add the following code:
+File: internal/assert/assert.go
+package
+ 
+assert
+import
+ 
+(
+    
+"testing"
+)
+func
+ 
+Equal
+[
+T
+ 
+comparable
+]
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+actual
+,
+ 
+expected
+ 
+T
+)
+ 
+{
+    
+t
+.
+Helper
+(
+)
+    
+if
+ 
+actual
+ 
+!=
+ 
+expected
+ 
+{
+        
+t
+.
+Errorf
+(
+"got: %v; want: %v"
+,
+ 
+actual
+,
+ 
+expected
+)
+    
+}
+}
+Notice how we’ve set this up so that 
+Equal()
+ is a 
+generic function
+? This means that we’ll be
+able to use it irrespective of what the type of the 
+actual
+ and 
+expected
+ values is. So long as
+both 
+actual
+ and 
+expected
+ have the 
+same
+ type (for example, they are both 
+string
+ values, or
+both 
+int
+ values) our test code should compile and work fine when we call 
+Equal()
+.
+Note:
+ The 
+t.Helper()
+ function that we’re using in the code above indicates to the Go
+test runner that our 
+Equal()
+ function is a test helper. This means that when 
+t.Errorf()
+is called from our 
+Equal()
+ function, the Go test runner will report the filename and line
+number of the code 
+which called
+ our 
+Equal()
+ function in the output.
+With that in place, we can simplify our 
+TestHumanDate()
+ test like so:File: cmd/web/templates_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"testing"
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/assert"
+ 
+// New import
+)
+func
+ 
+TestHumanDate
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+tests
+ 
+:=
+ 
+[
+]
+struct
+ 
+{
+        
+name
+ 
+string
+        
+tm
+   
+time
+.
+Time
+        
+want
+ 
+string
+    
+}
+{
+        
+{
+            
+name
+:
+ 
+"UTC"
+,
+            
+tm
+:
+   
+time
+.
+Date
+(
+2022
+,
+ 
+3
+,
+ 
+17
+,
+ 
+10
+,
+ 
+15
+,
+ 
+0
+,
+ 
+0
+,
+ 
+time
+.
+UTC
+)
+,
+            
+want
+:
+ 
+"17 Mar 2022 at 10:15"
+,
+        
+}
+,
+        
+{
+            
+name
+:
+ 
+"Empty"
+,
+            
+tm
+:
+   
+time
+.
+Time
+{
+}
+,
+            
+want
+:
+ 
+""
+,
+        
+}
+,
+        
+{
+            
+name
+:
+ 
+"CET"
+,
+            
+tm
+:
+   
+time
+.
+Date
+(
+2022
+,
+ 
+3
+,
+ 
+17
+,
+ 
+10
+,
+ 
+15
+,
+ 
+0
+,
+ 
+0
+,
+ 
+time
+.
+FixedZone
+(
+"CET"
+,
+ 
+1
+*
+60
+*
+60
+)
+)
+,
+            
+want
+:
+ 
+"17 Mar 2022 at 09:15"
+,
+        
+}
+,
+    
+}
+    
+for
+ 
+_
+,
+ 
+tt
+ 
+:=
+ 
+range
+ 
+tests
+ 
+{
+        
+t
+.
+Run
+(
+tt
+.
+name
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+            
+hd
+ 
+:=
+ 
+humanDate
+(
+tt
+.
+tm
+)
+            
+// Use the new assert.Equal() helper to compare the expected and 
+            
+// actual values.
+            
+assert
+.
+Equal
+(
+t
+,
+ 
+hd
+,
+ 
+tt
+.
+want
+)
+        
+}
+)
+    
+}
+}
+Additional information
+Sub-tests without a table of test cases
+It’s important to point out that you don’t need to use sub-tests in conjunction with table-
+driven tests (like we have done so far in this chapter). It’s perfectly valid to execute sub-tests
+by calling 
+t.Run()
+ consecutively in your test functions, similar to this:func
+ 
+TestExample
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+t
+.
+Run
+(
+"Example sub-test 1"
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+        
+// Do a test.
+    
+}
+)
+    
+t
+.
+Run
+(
+"Example sub-test 2"
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+        
+// Do another test.
+    
+}
+)
+    
+t
+.
+Run
+(
+"Example sub-test 3"
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+        
+// And another...
+    
+}
+)
+}Chapter 14.2.
+Testing HTTP handlers and middleware
+Let’s move on and discuss some specific techniques for unit testing your HTTP handlers.
+All the handlers that we’ve written for this project so far are a bit complex to test, and to
+introduce things I’d prefer to start off with something more simple.
+So, if you’re following along, head over to your 
+handlers.go
+ file and create a new 
+ping
+handler function which returns a 
+200 OK
+ status code and an 
+"OK"
+ response body. It’s the type
+of handler that you might want to implement for status-checking or uptime monitoring of
+your server.
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+ping
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"OK"
+)
+)
+}
+In this chapter we’ll create a new 
+TestPing
+ unit test which:
+Checks that the response status code written by the 
+ping
+ handler is 
+200
+.
+Checks that the response body written by the 
+ping
+ handler is 
+"OK"
+.
+Recording responses
+To assist in testing your HTTP handlers Go provides the 
+net/http/httptest
+ package, which
+contains a suite of useful tools.
+One of these tools is the 
+httptest.ResponseRecorder
+ type. This is essentially an
+implementation of 
+http.ResponseWriter
+ which records the response status code, headers
+and body instead of actually writing them to a HTTP connection.
+So an easy way to unit test your handlers is to create a new 
+httptest.ResponseRecorder
+object, pass it to the handler function, and then examine it again after the handler returns.
+Let’s try doing exactly that to test the 
+ping
+ handler function.First, follow the Go conventions and create a new 
+handlers_test.go
+ file to hold the test…
+$ touch cmd/web/handlers_test.go
+And then add the following code:
+File: cmd/web/handlers_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"io"
+    
+"net/http"
+    
+"net/http/httptest"
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+func
+ 
+TestPing
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Initialize a new httptest.ResponseRecorder.
+    
+rr
+ 
+:=
+ 
+httptest
+.
+NewRecorder
+(
+)
+    
+// Initialize a new dummy http.Request.
+    
+r
+,
+ 
+err
+ 
+:=
+ 
+http
+.
+NewRequest
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+nil
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Call the ping handler function, passing in the
+    
+// httptest.ResponseRecorder and http.Request.
+    
+ping
+(
+rr
+,
+ 
+r
+)
+    
+// Call the Result() method on the http.ResponseRecorder to get the
+    
+// http.Response generated by the ping handler.
+    
+rs
+ 
+:=
+ 
+rr
+.
+Result
+(
+)
+    
+// Check that the status code written by the ping handler was 200.
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+StatusCode
+,
+ 
+http
+.
+StatusOK
+)
+   
+    
+// And we can check that the response body written by the ping handler
+    
+// equals "OK".
+    
+defer
+ 
+rs
+.
+Body
+.
+Close
+(
+)
+    
+body
+,
+ 
+err
+ 
+:=
+ 
+io
+.
+ReadAll
+(
+rs
+.
+Body
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+bytes
+.
+TrimSpace
+(
+body
+)
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+string
+(
+body
+)
+,
+ 
+"OK"
+)
+}Note:
+ In the code above we use the 
+t.Fatal()
+ function in a couple of places to handle
+situations where there is an unexpected error in our test code. When called, 
+t.Fatal()
+will mark the test as failed, log the error, and then completely stop execution of the
+current test
+ (or sub-test).
+Typically you should call 
+t.Fatal()
+ in situations where it doesn’t make sense to
+continue the current test — such as an error during a setup step, or where an
+unexpected error from a Go standard library function means you can’t proceed with the
+test.
+OK, save the file, then try running 
+go test
+ again with the verbose flag set. Like so:
+$ go test -v ./cmd/web/
+=== RUN   TestPing
+--- PASS: TestPing (0.00s)
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+=== RUN   TestHumanDate/Empty
+=== RUN   TestHumanDate/CET
+--- PASS: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+    --- PASS: TestHumanDate/Empty (0.00s)
+    --- PASS: TestHumanDate/CET (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.003s
+So this is looking good. We can see that our new 
+TestPing
+ test is being run and passing
+without any problems.
+Testing middleware
+It’s also possible to use the same general pattern to unit test your middleware.
+We’ll demonstrate how by creating a new 
+TestSecureHeaders
+ test for the 
+secureHeaders()
+middleware that we made 
+earlier in the book
+. As part of this test we want to check that:
+The 
+secureHeaders()
+ middleware sets all the expected headers on the HTTP response.
+The 
+secureHeaders()
+ middleware correctly calls the next handler in the chain.
+First you’ll need to create a 
+cmd/web/middleware_test.go
+ file to hold the test:
+$ touch cmd/web/middleware_test.go
+And then add the following code:File: cmd/web/middleware_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"io"
+    
+"net/http"
+    
+"net/http/httptest"
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+func
+ 
+TestSecureHeaders
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Initialize a new httptest.ResponseRecorder and dummy http.Request.
+    
+rr
+ 
+:=
+ 
+httptest
+.
+NewRecorder
+(
+)
+    
+r
+,
+ 
+err
+ 
+:=
+ 
+http
+.
+NewRequest
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+nil
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Create a mock HTTP handler that we can pass to our secureHeaders
+    
+// middleware, which writes a 200 status code and an "OK" response body.
+    
+next
+ 
+:=
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+w
+.
+Write
+(
+[
+]
+byte
+(
+"OK"
+)
+)
+    
+}
+)
+    
+// Pass the mock HTTP handler to our secureHeaders middleware. Because
+    
+// secureHeaders *returns* a http.Handler we can call its ServeHTTP()
+    
+// method, passing in the http.ResponseRecorder and dummy http.Request to
+    
+// execute it.
+    
+secureHeaders
+(
+next
+)
+.
+ServeHTTP
+(
+rr
+,
+ 
+r
+)
+    
+// Call the Result() method on the http.ResponseRecorder to get the results
+    
+// of the test.
+    
+rs
+ 
+:=
+ 
+rr
+.
+Result
+(
+)
+    
+// Check that the middleware has correctly set the Content-Security-Policy
+    
+// header on the response.
+    
+expectedValue
+ 
+:=
+ 
+"default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com"
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+Header
+.
+Get
+(
+"Content-Security-Policy"
+)
+,
+ 
+expectedValue
+)
+    
+// Check that the middleware has correctly set the Referrer-Policy
+    
+// header on the response.
+    
+expectedValue
+ 
+=
+ 
+"origin-when-cross-origin"
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+Header
+.
+Get
+(
+"Referrer-Policy"
+)
+,
+ 
+expectedValue
+)
+    
+// Check that the middleware has correctly set the X-Content-Type-Options
+    
+// header on the response.
+    
+expectedValue
+ 
+=
+ 
+"nosniff"
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+Header
+.
+Get
+(
+"X-Content-Type-Options"
+)
+,
+ 
+expectedValue
+)
+    
+// Check that the middleware has correctly set the X-Frame-Options header
+    
+// on the response.
+    
+expectedValue
+ 
+=
+ 
+"deny"
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+Header
+.
+Get
+(
+"X-Frame-Options"
+)
+,
+ 
+expectedValue
+)
+    
+// Check that the middleware has correctly set the X-XSS-Protection header
+    
+// on the response
+    
+expectedValue
+ 
+=
+ 
+"0"
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+Header
+.
+Get
+(
+"X-XSS-Protection"
+)
+,
+ 
+expectedValue
+)
+    
+// Check that the middleware has correctly called the next handler in line
+    
+// and the response status code and body are as expected.
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+StatusCode
+,
+ 
+http
+.
+StatusOK
+)    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+StatusCode
+,
+ 
+http
+.
+StatusOK
+)
+    
+defer
+ 
+rs
+.
+Body
+.
+Close
+(
+)
+    
+body
+,
+ 
+err
+ 
+:=
+ 
+io
+.
+ReadAll
+(
+rs
+.
+Body
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+bytes
+.
+TrimSpace
+(
+body
+)
+    
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+string
+(
+body
+)
+,
+ 
+"OK"
+)
+}
+If you run the tests now, you should see that the 
+TestSecureHeaders
+ test passes without any
+issues.
+$ go test -v ./cmd/web/
+=== RUN   TestPing
+--- PASS: TestPing (0.00s)
+=== RUN   TestSecureHeaders
+--- PASS: TestSecureHeaders (0.00s)
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+=== RUN   TestHumanDate/Empty
+=== RUN   TestHumanDate/CET
+--- PASS: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+    --- PASS: TestHumanDate/Empty (0.00s)
+    --- PASS: TestHumanDate/CET (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.003s
+So, in summary, a quick and easy way to unit test your HTTP handlers and middleware is to
+simply call them using the 
+httptest.ResponseRecorder
+ type. You can then examine the status
+code, headers and response body of the recorded response to make sure that they are
+working as expected.Chapter 14.3.
+End-to-end testing
+In the last chapter we talked through the general pattern for how to unit test your HTTP
+handlers in isolation.
+But — most of the time — your HTTP handlers aren’t 
+actually used
+ in isolation. So in this
+chapter we’re going to explain how to run 
+end-to-end tests
+ on your web application that
+encompass your routing, middleware and handlers. Arguably, end-to-end testing should give
+you more confidence that your application is working correctly than unit testing in isolation.
+To illustrate this, we’ll adapt our 
+TestPing
+ function so that it runs an end-to-end test on our
+code. Specifically, we want the test to ensure that a 
+GET /ping
+ request to our application
+calls the 
+ping
+ handler function and results in a 
+200 OK
+ status code and 
+"OK"
+ response body.
+Essentially, we want to test that our application has a route like this:
+Method
+Pattern
+Handler
+Action
+…
+…
+…
+…
+GET
+/ping
+ping
+Return a 200 OK response
+Using httptest.Server
+The key to end-to-end testing our application is the 
+httptest.NewTLSServer()
+ function,
+which spins up a 
+httptest.Server
+ instance that we can make HTTPS requests to.
+The whole pattern is a bit too complicated to explain upfront, so it’s probably best to
+demonstrate first by writing the code and then we’ll talk through the details afterwards.
+With that in mind, head back to your 
+handlers_test.go
+ file and update the 
+TestPing
+ test so
+that it looks like this:File: cmd/web/handlers_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"io"
+    
+"log"
+ 
+// New import
+    
+"net/http"
+    
+"net/http/httptest"
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+func
+ 
+TestPing
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Create a new instance of our application struct. For now, this just
+    
+// contains a couple of mock loggers (which discard anything written to
+    
+// them).
+    
+app
+ 
+:=
+ 
+&
+application
+{
+        
+errorLog
+:
+ 
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+        
+infoLog
+:
+  
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+    
+}
+    
+// We then use the httptest.NewTLSServer() function to create a new test
+    
+// server, passing in the value returned by our app.routes() method as the
+    
+// handler for the server. This starts up a HTTPS server which listens on a
+    
+// randomly-chosen port of your local machine for the duration of the test.
+    
+// Notice that we defer a call to ts.Close() so that the server is shutdown
+    
+// when the test finishes.
+    
+ts
+ 
+:=
+ 
+httptest
+.
+NewTLSServer
+(
+app
+.
+routes
+(
+)
+)
+    
+defer
+ 
+ts
+.
+Close
+(
+)
+    
+// The network address that the test server is listening on is contained in
+    
+// the ts.URL field. We can  use this along with the ts.Client().Get() method
+    
+// to make a GET /ping request against the test server. This returns a
+    
+// http.Response struct containing the response.
+    
+rs
+,
+ 
+err
+ 
+:=
+ 
+ts
+.
+Client
+(
+)
+.
+Get
+(
+ts
+.
+URL
+ 
++
+ 
+"/ping"
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// We can then check the value of the response status code and body using
+    
+// the same pattern as before.
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+rs
+.
+StatusCode
+,
+ 
+http
+.
+StatusOK
+)
+    
+defer
+ 
+rs
+.
+Body
+.
+Close
+(
+)
+    
+body
+,
+ 
+err
+ 
+:=
+ 
+io
+.
+ReadAll
+(
+rs
+.
+Body
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+bytes
+.
+TrimSpace
+(
+body
+)
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+string
+(
+body
+)
+,
+ 
+"OK"
+)
+}
+There are a few things about this code to point out and discuss.
+When we call 
+httptest.NewTLSServer()
+ to initialize the test server we need to pass in a
+http.Handler
+ as the parameter — and this handler is called each time the test server
+receives a HTTPS request. In our case, we’ve passed in the return value from ourapp.routes()
+ method, meaning that a request to the test server will use 
+all our real
+application routes, middleware and handlers
+.
+This is a big upside of the work that we did 
+earlier in the book
+ to isolate all our application
+routing in the 
+app.routes()
+ method.
+If you’re testing a HTTP (not HTTPS) server you should use the 
+httptest.NewServer()
+function to create the test server instead.
+The 
+ts.Client()
+ method returns the 
+test server client
+ — which has the type 
+http.Client
+— and we should always use this client to send requests to the test server. It’s possible to
+configure the client to tweak its behavior, and we’ll explain how to do that at the end of
+this chapter.
+You might be wondering why we have set the 
+errorLog
+ and 
+infoLog
+ fields of our
+application
+ struct, but none of the other fields. The reason for this is that the loggers are
+needed by the 
+logRequest
+ and 
+recoverPanic
+ middlewares, which are used by our
+application on every route. Trying to run this test without setting these the two
+dependencies will result in a panic.
+Anyway, let’s try out the new test:
+$ go test ./cmd/web/
+--- FAIL: TestPing (0.00s)
+    handlers_test.go:41: got 404; want 200
+    handlers_test.go:51: got: Not Found; want: OK
+FAIL
+FAIL    snippetbox.alexedwards.net/cmd/web      0.007s
+FAIL
+If you’re following along, you should get a failure at this point.
+We can see from the test output that the response from our 
+GET /ping
+ request has a 
+404
+status code, rather than the 
+200
+ we expected. And that’s because we haven’t actually
+registered a 
+GET /ping
+ route with our router yet.
+Let’s fix that now:File: cmd/web/routes.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+    
+router
+.
+NotFound
+ 
+=
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+    
+}
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+FS
+(
+ui
+.
+Files
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/static/*filepath"
+,
+ 
+fileServer
+)
+    
+// Add a new GET /ping route.
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/ping"
+,
+ 
+ping
+)
+    
+dynamic
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+sessionManager
+.
+LoadAndSave
+,
+ 
+noSurf
+,
+ 
+app
+.
+authenticate
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+home
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+snippetView
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/user/signup"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userSignup
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/user/signup"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userSignupPost
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/user/login"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userLogin
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/user/login"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userLoginPost
+)
+)
+    
+protected
+ 
+:=
+ 
+dynamic
+.
+Append
+(
+app
+.
+requireAuthentication
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/create"
+,
+ 
+protected
+.
+ThenFunc
+(
+app
+.
+snippetCreate
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/snippet/create"
+,
+ 
+protected
+.
+ThenFunc
+(
+app
+.
+snippetCreatePost
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/user/logout"
+,
+ 
+protected
+.
+ThenFunc
+(
+app
+.
+userLogoutPost
+)
+)
+    
+standard
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+recoverPanic
+,
+ 
+app
+.
+logRequest
+,
+ 
+secureHeaders
+)
+    
+return
+ 
+standard
+.
+Then
+(
+router
+)
+}
+And if you run the tests again everything should now pass.
+$ go test ./cmd/web/
+ok      snippetbox.alexedwards.net/cmd/web    0.008s
+Using test helpers
+Our 
+TestPing
+ test is now working nicely. But there’s a good opportunity to break out some of
+this code into helper functions, which we can reuse as we add more end-to-end tests to our
+project.
+There’s no hard-and-fast rules about where to put helper methods for tests. If a helper is only
+used in a specific 
+*_test.go
+ file, then it probably makes sense to include it inline in that file
+alongside your tests. At the other end of the spectrum, if you are going to use a helper in tests
+across multiple packages, then you might want to put it in a reusable package called
+internal/testutils
+ (or similar) which can be imported by your test files.In our case the helpers will only be used in our 
+cmd/web
+ package and we’ll put them in a new
+cmd/web/testutils_test.go
+ file.
+If you’re following along, please go ahead and create this now…
+$ touch cmd/web/testutils_test.go
+And then add the following code:File: cmd/web/testutils_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"io"
+    
+"log"
+    
+"net/http"
+    
+"net/http/httptest"
+    
+"testing"
+)
+// Create a newTestApplication helper which returns an instance of our
+// application struct containing mocked dependencies.
+func
+ 
+newTestApplication
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+*
+application
+ 
+{
+    
+return
+ 
+&
+application
+{
+        
+errorLog
+:
+ 
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+        
+infoLog
+:
+  
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+    
+}
+}
+// Define a custom testServer type which embeds a httptest.Server instance.
+type
+ 
+testServer
+ 
+struct
+ 
+{
+    
+*
+httptest
+.
+Server
+}
+// Create a newTestServer helper which initalizes and returns a new instance
+// of our custom testServer type.
+func
+ 
+newTestServer
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+h
+ 
+http
+.
+Handler
+)
+ 
+*
+testServer
+ 
+{
+    
+ts
+ 
+:=
+ 
+httptest
+.
+NewTLSServer
+(
+h
+)
+    
+return
+ 
+&
+testServer
+{
+ts
+}
+}
+// Implement a get() method on our custom testServer type. This makes a GET
+// request to a given url path using the test server client, and returns the 
+// response status code, headers and body.
+func
+ 
+(
+ts
+ 
+*
+testServer
+)
+ 
+get
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+urlPath
+ 
+string
+)
+ 
+(
+int
+,
+ 
+http
+.
+Header
+,
+ 
+string
+)
+ 
+{
+    
+rs
+,
+ 
+err
+ 
+:=
+ 
+ts
+.
+Client
+(
+)
+.
+Get
+(
+ts
+.
+URL
+ 
++
+ 
+urlPath
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+defer
+ 
+rs
+.
+Body
+.
+Close
+(
+)
+    
+body
+,
+ 
+err
+ 
+:=
+ 
+io
+.
+ReadAll
+(
+rs
+.
+Body
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+bytes
+.
+TrimSpace
+(
+body
+)
+    
+return
+ 
+rs
+.
+StatusCode
+,
+ 
+rs
+.
+Header
+,
+ 
+string
+(
+body
+)
+}
+Essentially, this is just a generalization of the code that we’ve already written in this chapter
+to spin up a test server and make a 
+GET
+ request against it.
+Let’s head back to our 
+TestPing
+ handler and put these new helpers to use:File: cmd/web/handlers_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+func
+ 
+TestPing
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+app
+ 
+:=
+ 
+newTestApplication
+(
+t
+)
+    
+ts
+ 
+:=
+ 
+newTestServer
+(
+t
+,
+ 
+app
+.
+routes
+(
+)
+)
+    
+defer
+ 
+ts
+.
+Close
+(
+)
+    
+code
+,
+ 
+_
+,
+ 
+body
+ 
+:=
+ 
+ts
+.
+get
+(
+t
+,
+ 
+"/ping"
+)
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+code
+,
+ 
+http
+.
+StatusOK
+)
+    
+assert
+.
+Equal
+(
+t
+,
+ 
+body
+,
+ 
+"OK"
+)
+}
+And, again, if you run the tests again everything should still pass.
+$ go test ./cmd/web/
+ok      snippetbox.alexedwards.net/cmd/web    0.013s
+This is shaping up nicely now. We have a neat pattern in place for spinning up a test server
+and making requests to it, encompassing our routing, middleware and handlers in an end-to-
+end test. We’ve also broken apart some of the code into helpers, which will make writing
+future tests quicker and easier.
+Cookies and redirections
+So far in this chapter we’ve been using the default 
+test server client
+ settings. But there are a
+couple of changes I’d like to make so that it’s better suited to testing our web application.
+Specifically:
+We want the client to automatically store any cookies sent in a HTTPS response, so that we
+can include them (if appropriate) in any subsequent requests back to the test server. This
+will come in handy later in the book when we need cookies to be supported across
+multiple requests in order to test our anti-CSRF measures.
+We don’t want the client to automatically follow redirects. Instead we want 
+it to return the
+first HTTPS response sent by our server so that we can test the response 
+for that specific
+request
+.To make these changes, let’s go back to the 
+testutils_test.go
+ file we just created and
+update the 
+newTestServer()
+ function like so:
+File: cmd/web/testutils_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"io"
+    
+"log"
+    
+"net/http"
+    
+"net/http/cookiejar"
+ 
+// New import
+    
+"net/http/httptest"
+    
+"testing"
+)
+...
+func
+ 
+newTestServer
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+h
+ 
+http
+.
+Handler
+)
+ 
+*
+testServer
+ 
+{
+    
+// Initialize the test server as normal.
+    
+ts
+ 
+:=
+ 
+httptest
+.
+NewTLSServer
+(
+h
+)
+    
+// Initialize a new cookie jar.
+    
+jar
+,
+ 
+err
+ 
+:=
+ 
+cookiejar
+.
+New
+(
+nil
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Add the cookie jar to the test server client. Any response cookies will
+    
+// now be stored and sent with subsequent requests when using this client.
+    
+ts
+.
+Client
+(
+)
+.
+Jar
+ 
+=
+ 
+jar
+    
+// Disable redirect-following for the test server client by setting a custom
+    
+// CheckRedirect function. This function will be called whenever a 3xx
+    
+// response is received by the client, and by always returning a
+    
+// http.ErrUseLastResponse error it forces the client to immediately return
+    
+// the received response.
+    
+ts
+.
+Client
+(
+)
+.
+CheckRedirect
+ 
+=
+ 
+func
+(
+req
+ 
+*
+http
+.
+Request
+,
+ 
+via
+ 
+[
+]
+*
+http
+.
+Request
+)
+ 
+error
+ 
+{
+        
+return
+ 
+http
+.
+ErrUseLastResponse
+    
+}
+    
+return
+ 
+&
+testServer
+{
+ts
+}
+}
+...Chapter 14.4.
+Customizing how tests run
+Before we continue adding more tests to our application, I want to take a quick break and talk
+about a few of the useful flags and options that are available to customize how your tests run.
+Controlling which tests are run
+So far in this book we’ve been running the tests in a specific package (the 
+cmd/web
+ package)
+like so:
+$ go test ./cmd/web
+But it’s also possible to run 
+all
+ the tests in your current project by using the 
+./...
+ wildcard
+pattern. In our case, we can use it to run all tests in our project like this:
+$ go test ./...
+ok      snippetbox.alexedwards.net/cmd/web      0.007s
+?       snippetbox.alexedwards.net/internal/models      [no test files]
+?       snippetbox.alexedwards.net/internal/validator   [no test files]
+?       snippetbox.alexedwards.net/ui   [no test files]
+Or going in the other direction, it’s possible to only run specific tests by using the 
+-run
+ flag.
+This allows you to pass in a regular expression — and only tests with a name that matches the
+regular expression will be run.
+For example, we could opt to run only the 
+TestPing
+ test as follows:
+$ go test -v -run="^TestPing$" ./cmd/web/
+=== RUN   TestPing
+--- PASS: TestPing (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.008s
+And you can even use the 
+-run
+ flag to limit testing to some specific sub-tests using the format
+{test regexp}/{sub-test regexp}
+. For example to run the 
+UTC
+ sub-test of our
+TestHumanDate
+ test we could do this:$ go test -v -run="^TestHumanDate$/^UTC$" ./cmd/web
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+--- PASS: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web    0.003s
+In contrast, you can prevent specific tests from running by using the 
+-skip
+ flag. Like the 
+-run
+flag we just looked at, this allows you to specify a regular expression and any tests with a
+name that matches the regular expression 
+won’t
+ be run. For example, to skip the
+TestHumanDate
+ test:
+$ go test -v -skip="^TestHumanDate$" ./cmd/web/
+=== RUN   TestPing
+--- PASS: TestPing (0.00s)
+=== RUN   TestSecureHeaders
+--- PASS: TestSecureHeaders (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.006s
+Test caching
+You’ve perhaps noticed by now that if you run exactly the same test twice — without making
+any changes to the package that you’re testing — then a 
+cached
+ version of the test result is
+shown (indicated by the 
+(cached)
+ annotation next to the package name).
+$ go test ./cmd/web
+ok      snippetbox.alexedwards.net/cmd/web      (cached)
+In most cases, the caching of test results is really useful (especially for large codebases)
+because it helps reduce the total test runtime. But if you want force your tests to run in full
+(and avoid the cache) you can use the 
+-count=1
+ flag:
+$ go test -count=1 ./cmd/web 
+Note:
+ The 
+count
+ flag is used to tell 
+go test
+ 
+how many times you want to execute each
+test
+. 
+It’s a 
+non-cacheable
+ flag, which means that any time you use it 
+go test
+ will neither
+read or write the test results to the cache. So using 
+count=1
+ is a bit of a trick to avoid the
+cache without otherwise affecting how your tests run.
+Alternatively, you can clear cached results for all tests with the 
+go clean
+ command:$ go clean -testcache   
+Fast failure
+It also worth pointing out that when we use the 
+t.Errorf()
+ function to mark a test as failed, it
+doesn’t cause 
+go test
+ to immediately exit. All your other tests (and sub-tests) will continue to
+be run after a failure.
+If you would prefer to terminate the tests immediately after the first failure you can use the
+-failfast
+ flag:
+$ go test -failfast ./cmd/web
+It’s important to note that the 
+-failfast
+ flag only stops tests 
+in the package that had the
+failure
+. If you are running tests in multiple packages (for example by using 
+go test ./...
+),
+then the tests in the other packages 
+will continue to run
+.
+Parallel testing
+By default, the 
+go test
+ command executes all tests in a serial manner, one after another.
+When you have a small number of tests (like we do) and the runtime is very fast, this is
+absolutely fine.
+But if you have hundreds or thousands of tests the total run time can start adding up to
+something more meaningful. And in that scenario, you may save yourself some time by
+running your tests in parallel.
+You can indicate that it’s OK for a test to be run concurrently alongside other tests by calling
+the 
+t.Parallel()
+ function at the start of the test. For example:
+func
+ 
+TestPing
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+t
+.
+Parallel
+(
+)
+    
+...
+}
+It’s important to note here that:
+Tests marked using 
+t.Parallel()
+ will be run in parallel with — 
+and only with
+ — other
+parallel tests.By default, the maximum number of tests that will be run simultaneously is the current
+value of 
+GOMAXPROCS
+. You can override this by setting a specific value via the 
+-parallel
+flag. For example:
+$ go test -parallel=4 ./...
+Not all tests are suitable to be run in parallel. For example, if you have an integration test
+which requires a database table to be in a specific known state, then you wouldn’t want to
+run it in parallel with other tests that manipulate the same database table.
+Enabling the race detector
+The 
+go test
+ command includes a 
+-race
+ flag which enables Go’s 
+race detector
+ when running
+tests.
+If the code you’re testing leverages concurrency, or you’re running tests in parallel, enabling
+this can be a good idea to help to flag up race conditions that exist in your application. You
+can use it like so:
+$ go test -race ./cmd/web/
+It’s important to point out that the race detector is just a tool that flags data races if and when
+they are identified at runtime during testing. It doesn’t carry out static analysis of your
+codebase, and a clear run doesn’t 
+ensure
+ that your code is free of race conditions.
+Enabling the race detector will also increase the overall running time of your tests. So if
+you’re running tests very frequently as part of a TDD workflow, you may prefer to use the
+-race
+ flag during pre-commit test runs only.Chapter 14.5.
+Mocking dependencies
+Now that we’ve explained some general patterns for testing your web application, in this
+chapter we’re going to get a bit more serious and write some tests for our 
+snippetView
+handler and 
+GET /snippet/view/:id
+ route.
+But first, let’s talk about dependencies.
+Throughout this project we’ve injected dependencies into our handlers via the 
+application
+struct, which currently looks like this:
+type
+ 
+application
+ 
+struct
+ 
+{
+    
+errorLog
+       
+*
+log
+.
+Logger
+    
+infoLog
+        
+*
+log
+.
+Logger
+    
+snippets
+       
+*
+models
+.
+SnippetModel
+    
+users
+          
+*
+models
+.
+UserModel
+    
+templateCache
+  
+map
+[
+string
+]
+*
+template
+.
+Template
+    
+formDecoder
+    
+*
+form
+.
+Decoder
+    
+sessionManager
+ 
+*
+scs
+.
+SessionManager
+}
+When testing, it sometimes makes sense to 
+mock
+ these dependencies instead of using 
+exactly
+the same ones that you do in your production application.
+For example, in the previous chapter we 
+mocked
+ the 
+errorLog
+ and 
+infoLog
+ dependencies
+with loggers that write messages to 
+io.Discard
+, instead of the 
+os.Stdout
+ and 
+os.Stderr
+streams like we do in our production application:
+func
+ 
+newTestApplication
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+*
+application
+ 
+{
+    
+return
+ 
+&
+application
+{
+        
+errorLog
+:
+ 
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+        
+infoLog
+:
+  
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+    
+}
+}
+The reason for mocking these and writing to 
+io.Discard
+ is to avoid clogging up our test
+output with unnecessary log messages when we run 
+go test -v
+ (with verbose mode
+enabled).Note:
+ Depending on your background and programming experiences, you might not
+consider these loggers to be 
+mocks
+. You might call them 
+fakes
+, 
+stubs
+ or something else
+entirely. But the name doesn’t really matter — and different people 
+call them different
+things
+. What’s important is that we’re using something which 
+exposes the same interface
+as a production object
+ for the purpose of testing.
+The other two dependencies that it makes sense for us to mock are the 
+models.SnippetModel
+and 
+models.UserModel
+ database models. By creating mocks of these it’s possible for us to
+test the behavior of our handlers 
+without
+ needing to setup an entire test instance of the
+MySQL database.
+Mocking the database models
+If you’re following along, create a new 
+internal/models/mocks
+ package containing
+snippets.go
+ and 
+user.go
+ files to hold the database model mocks, like so:
+$ mkdir internal/models/mocks
+$ touch internal/models/mocks/snippets.go
+$ touch internal/models/mocks/users.go
+Let’s begin by creating a mock of our 
+models.SnippetModel
+. To do this, we’re going to create
+a simple struct which implements the same methods as our production
+models.SnippetModel
+, but have the methods return some fixed dummy data instead.File: internal/models/mocks/snippets.go
+package
+ 
+mocks
+import
+ 
+(
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/models"
+)
+var
+ 
+mockSnippet
+ 
+=
+ 
+&
+models
+.
+Snippet
+{
+    
+ID
+:
+      
+1
+,
+    
+Title
+:
+   
+"An old silent pond"
+,
+    
+Content
+:
+ 
+"An old silent pond..."
+,
+    
+Created
+:
+ 
+time
+.
+Now
+(
+)
+,
+    
+Expires
+:
+ 
+time
+.
+Now
+(
+)
+,
+}
+type
+ 
+SnippetModel
+ 
+struct
+{
+}
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Insert
+(
+title
+ 
+string
+,
+ 
+content
+ 
+string
+,
+ 
+expires
+ 
+int
+)
+ 
+(
+int
+,
+ 
+error
+)
+ 
+{
+    
+return
+ 
+2
+,
+ 
+nil
+}
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Get
+(
+id
+ 
+int
+)
+ 
+(
+*
+models
+.
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+switch
+ 
+id
+ 
+{
+    
+case
+ 
+1
+:
+        
+return
+ 
+mockSnippet
+,
+ 
+nil
+    
+default
+:
+        
+return
+ 
+nil
+,
+ 
+models
+.
+ErrNoRecord
+    
+}
+}
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Latest
+(
+)
+ 
+(
+[
+]
+*
+models
+.
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+return
+ 
+[
+]
+*
+models
+.
+Snippet
+{
+mockSnippet
+}
+,
+ 
+nil
+}
+And let’s do the same for our 
+models.UserModel
+, like so:File: internal/models/mocks/users.go
+package
+ 
+mocks
+import
+ 
+(
+    
+"snippetbox.alexedwards.net/internal/models"
+)
+type
+ 
+UserModel
+ 
+struct
+{
+}
+func
+ 
+(
+m
+ 
+*
+UserModel
+)
+ 
+Insert
+(
+name
+,
+ 
+email
+,
+ 
+password
+ 
+string
+)
+ 
+error
+ 
+{
+    
+switch
+ 
+email
+ 
+{
+    
+case
+ 
+"dupe@example.com"
+:
+        
+return
+ 
+models
+.
+ErrDuplicateEmail
+    
+default
+:
+        
+return
+ 
+nil
+    
+}
+}
+func
+ 
+(
+m
+ 
+*
+UserModel
+)
+ 
+Authenticate
+(
+email
+,
+ 
+password
+ 
+string
+)
+ 
+(
+int
+,
+ 
+error
+)
+ 
+{
+    
+if
+ 
+email
+ 
+==
+ 
+"alice@example.com"
+ 
+&&
+ 
+password
+ 
+==
+ 
+"pa$$word"
+ 
+{
+        
+return
+ 
+1
+,
+ 
+nil
+    
+}
+    
+return
+ 
+0
+,
+ 
+models
+.
+ErrInvalidCredentials
+}
+func
+ 
+(
+m
+ 
+*
+UserModel
+)
+ 
+Exists
+(
+id
+ 
+int
+)
+ 
+(
+bool
+,
+ 
+error
+)
+ 
+{
+    
+switch
+ 
+id
+ 
+{
+    
+case
+ 
+1
+:
+        
+return
+ 
+true
+,
+ 
+nil
+    
+default
+:
+        
+return
+ 
+false
+,
+ 
+nil
+    
+}
+}
+Initializing the mocks
+For the next step in our build, let’s head back to the 
+testutils_test.go
+ file and update the
+newTestApplication()
+ function so that it creates an 
+application
+ struct with all the
+necessary dependencies for testing.File: cmd/web/testutils_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"io"
+    
+"log"
+    
+"net/http"
+    
+"net/http/cookiejar"
+    
+"net/http/httptest"
+    
+"testing"
+    
+"time"
+ 
+// New import
+    
+"snippetbox.alexedwards.net/internal/models/mocks"
+ 
+// New import
+    
+"github.com/alexedwards/scs/v2"
+    
+// New import
+    
+"github.com/go-playground/form/v4"
+ 
+// New import
+)
+func
+ 
+newTestApplication
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+*
+application
+ 
+{
+    
+// Create an instance of the template cache.
+    
+templateCache
+,
+ 
+err
+ 
+:=
+ 
+newTemplateCache
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// And a form decoder.
+    
+formDecoder
+ 
+:=
+ 
+form
+.
+NewDecoder
+(
+)
+    
+// And a session manager instance. Note that we use the same settings as
+    
+// production, except that we *don't* set a Store for the session manager.
+    
+// If no store is set, the SCS package will default to using a transient
+    
+// in-memory store, which is ideal for testing purposes.
+    
+sessionManager
+ 
+:=
+ 
+scs
+.
+New
+(
+)
+    
+sessionManager
+.
+Lifetime
+ 
+=
+ 
+12
+ 
+*
+ 
+time
+.
+Hour
+    
+sessionManager
+.
+Cookie
+.
+Secure
+ 
+=
+ 
+true
+    
+return
+ 
+&
+application
+{
+        
+errorLog
+:
+       
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+        
+infoLog
+:
+        
+log
+.
+New
+(
+io
+.
+Discard
+,
+ 
+""
+,
+ 
+0
+)
+,
+        
+snippets
+:
+       
+&
+mocks
+.
+SnippetModel
+{
+}
+,
+ 
+// Use the mock.
+        
+users
+:
+          
+&
+mocks
+.
+UserModel
+{
+}
+,
+    
+// Use the mock.
+        
+templateCache
+:
+  
+templateCache
+,
+        
+formDecoder
+:
+    
+formDecoder
+,
+        
+sessionManager
+:
+ 
+sessionManager
+,
+    
+}
+}
+...
+If you go ahead and try to run the tests now, it will fail to compile with the following errors:
+$ go test ./cmd/web
+# snippetbox.alexedwards.net/cmd/web [snippetbox.alexedwards.net/cmd/web.test]
+cmd/web/testutils_test.go:40:19: cannot use &mocks.SnippetModel{} (value of type *mocks.SnippetModel) as type *models.SnippetModel in struct literal
+cmd/web/testutils_test.go:41:19: cannot use &mocks.UserModel{} (value of type *mocks.UserModel) as type *models.UserModel in struct literal
+FAIL    snippetbox.alexedwards.net/cmd/web [build failed]
+FAIL
+This is happening because our 
+application
+ struct is expecting pointers tomodels.SnippetModel
+ and 
+models.UserModel
+ instances, but we are trying to use pointers to
+mocks.SnippetModel
+ and 
+mocks.UserModel
+ instances instead.
+The idiomatic fix for this is to change our 
+application
+ struct so that it uses 
+interfaces
+ which
+are satisfied by both our mock and production database models.
+Tip:
+ If you’re not familiar with the idea of 
+interfaces
+ in Go, then there is an introduction
+in 
+this blog post
+ which I recommend reading.
+To do this, let’s head back to our 
+internal/models/snippets.go
+ and create a new
+SnippetModelInterface
+ interface type that 
+describes the methods that our actual
+SnippetModel
+ struct has
+.
+File: internal/models/snippets.go
+package
+ 
+models
+import
+ 
+(
+    
+"database/sql"
+    
+"errors"
+    
+"time"
+)
+type
+ 
+SnippetModelInterface
+ 
+interface
+ 
+{
+    
+Insert
+(
+title
+ 
+string
+,
+ 
+content
+ 
+string
+,
+ 
+expires
+ 
+int
+)
+ 
+(
+int
+,
+ 
+error
+)
+    
+Get
+(
+id
+ 
+int
+)
+ 
+(
+*
+Snippet
+,
+ 
+error
+)
+    
+Latest
+(
+)
+ 
+(
+[
+]
+*
+Snippet
+,
+ 
+error
+)
+}
+...
+And let’s also do the same thing for our 
+UserModel
+ struct too:File: internal/models/users.go
+package
+ 
+models
+import
+ 
+(
+    
+"database/sql"
+    
+"errors"
+    
+"strings"
+    
+"time"
+    
+"github.com/go-sql-driver/mysql"
+    
+"golang.org/x/crypto/bcrypt"
+)
+type
+ 
+UserModelInterface
+ 
+interface
+ 
+{
+    
+Insert
+(
+name
+,
+ 
+email
+,
+ 
+password
+ 
+string
+)
+ 
+error
+    
+Authenticate
+(
+email
+,
+ 
+password
+ 
+string
+)
+ 
+(
+int
+,
+ 
+error
+)
+    
+Exists
+(
+id
+ 
+int
+)
+ 
+(
+bool
+,
+ 
+error
+)
+}
+...
+Now that we’ve defined those interface types, let’s update our 
+application
+ struct to use
+them instead of the concrete 
+SnippetModel
+ and 
+UserModel
+ types. Like so:
+File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"crypto/tls"
+    
+"database/sql"
+    
+"flag"
+    
+"html/template"
+    
+"log"
+    
+"net/http"
+    
+"os"
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/models"
+    
+"github.com/alexedwards/scs/mysqlstore"
+    
+"github.com/alexedwards/scs/v2"
+    
+"github.com/go-playground/form/v4"
+    
+_
+ 
+"github.com/go-sql-driver/mysql"
+)
+type
+ 
+application
+ 
+struct
+ 
+{
+    
+errorLog
+       
+*
+log
+.
+Logger
+    
+infoLog
+        
+*
+log
+.
+Logger
+    
+snippets
+       
+models
+.
+SnippetModelInterface
+ 
+// Use our new interface type.
+    
+users
+          
+models
+.
+UserModelInterface
+    
+// Use our new interface type.
+    
+templateCache
+  
+map
+[
+string
+]
+*
+template
+.
+Template
+    
+formDecoder
+    
+*
+form
+.
+Decoder
+    
+sessionManager
+ 
+*
+scs
+.
+SessionManager
+}
+...
+And if you try running the tests again now, everything should work correctly.$ go test ./cmd/web/
+ok      snippetbox.alexedwards.net/cmd/web      0.008s
+Let’s take a moment to pause and reflect on what we’ve just done.
+We’ve updated the 
+application
+ struct so that instead of the 
+snippets
+ and 
+users
+ fields
+having the concrete types 
+*models.SnippetModel
+ and 
+*models.UserModel
+ they are 
+interfaces
+instead.
+So long as an object has the necessary methods to satisfy the interface, we can use them in
+our 
+application
+ struct. Both our ‘real’ database models (like 
+models.SnippetModel
+) and
+mock database models (like 
+mocks.SnippetModel
+) satisfy the interfaces, so we can now use
+them interchangeably.
+Testing the snippetView handler
+With that all now set up, let’s get stuck into writing an end-to-end test for our 
+snippetView
+handler which uses these mocked dependencies.
+As part of this test, the code in our 
+snippetView
+ handler will call the
+mock.SnippetModel.Get()
+ method. Just to remind you, this mocked model method returns a
+models.ErrNoRecord
+ 
+unless
+ the snippet ID is 
+1
+ — when it will return the following mock
+snippet:
+var
+ 
+mockSnippet
+ 
+=
+ 
+&
+models
+.
+Snippet
+{
+    
+ID
+:
+      
+1
+,
+    
+Title
+:
+   
+"An old silent pond"
+,
+    
+Content
+:
+ 
+"An old silent pond..."
+,
+    
+Created
+:
+ 
+time
+.
+Now
+(
+)
+,
+    
+Expires
+:
+ 
+time
+.
+Now
+(
+)
+,
+}
+So specifically, we want to test that:
+1
+. 
+For the request 
+GET /snippet/view/1
+ we receive a 
+200 OK
+ response with the relevant
+mocked snippet 
+contained in
+ the HTML response body.
+2
+. 
+For all other requests to 
+GET /snippet/view/*
+ we should receive a 
+404 Not Found
+response.
+For the first part here, we want to check that the request body 
+contains
+ some specific
+content, rather than being exactly equal to it. Let’s quickly add a new 
+StringContains()
+function to our 
+assert
+ package to help with that:File: internal/assert/assert.go
+package
+ 
+assert
+import
+ 
+(
+    
+"strings"
+ 
+// New import
+    
+"testing"
+)
+...
+func
+ 
+StringContains
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+actual
+,
+ 
+expectedSubstring
+ 
+string
+)
+ 
+{
+    
+t
+.
+Helper
+(
+)
+    
+if
+ 
+!
+strings
+.
+Contains
+(
+actual
+,
+ 
+expectedSubstring
+)
+ 
+{
+        
+t
+.
+Errorf
+(
+"got: %q; expected to contain: %q"
+,
+ 
+actual
+,
+ 
+expectedSubstring
+)
+    
+}
+}
+And then open up the 
+cmd/web/handlers_test.go
+ file and create a new 
+TestSnippetView
+ test
+like so:
+File: cmd/web/handlers_test.go
+package
+ 
+main
+...
+func
+ 
+TestSnippetView
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Create a new instance of our application struct which uses the mocked
+    
+// dependencies.
+    
+app
+ 
+:=
+ 
+newTestApplication
+(
+t
+)
+    
+// Establish a new test server for running end-to-end tests.
+    
+ts
+ 
+:=
+ 
+newTestServer
+(
+t
+,
+ 
+app
+.
+routes
+(
+)
+)
+    
+defer
+ 
+ts
+.
+Close
+(
+)
+    
+// Set up some table-driven tests to check the responses sent by our
+    
+// application for different URLs.
+    
+tests
+ 
+:=
+ 
+[
+]
+struct
+ 
+{
+        
+name
+     
+string
+        
+urlPath
+  
+string
+        
+wantCode
+ 
+int
+        
+wantBody
+ 
+string
+    
+}
+{
+        
+{
+            
+name
+:
+     
+"Valid ID"
+,
+            
+urlPath
+:
+  
+"/snippet/view/1"
+,
+            
+wantCode
+:
+ 
+http
+.
+StatusOK
+,
+            
+wantBody
+:
+ 
+"An old silent pond..."
+,
+        
+}
+,
+        
+{
+            
+name
+:
+     
+"Non-existent ID"
+,
+            
+urlPath
+:
+  
+"/snippet/view/2"
+,
+            
+wantCode
+:
+ 
+http
+.
+StatusNotFound
+,
+        
+}
+,
+        
+{
+            
+name
+:
+     
+"Negative ID"
+,
+            
+urlPath
+:
+  
+"/snippet/view/-1"
+,
+            
+wantCode
+:
+ 
+http
+.
+StatusNotFound
+,
+        
+}
+,
+        
+{            
+name
+:
+     
+"Decimal ID"
+,
+            
+urlPath
+:
+  
+"/snippet/view/1.23"
+,
+            
+wantCode
+:
+ 
+http
+.
+StatusNotFound
+,
+        
+}
+,
+        
+{
+            
+name
+:
+     
+"String ID"
+,
+            
+urlPath
+:
+  
+"/snippet/view/foo"
+,
+            
+wantCode
+:
+ 
+http
+.
+StatusNotFound
+,
+        
+}
+,
+        
+{
+            
+name
+:
+     
+"Empty ID"
+,
+            
+urlPath
+:
+  
+"/snippet/view/"
+,
+            
+wantCode
+:
+ 
+http
+.
+StatusNotFound
+,
+        
+}
+,
+    
+}
+    
+for
+ 
+_
+,
+ 
+tt
+ 
+:=
+ 
+range
+ 
+tests
+ 
+{
+        
+t
+.
+Run
+(
+tt
+.
+name
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+            
+code
+,
+ 
+_
+,
+ 
+body
+ 
+:=
+ 
+ts
+.
+get
+(
+t
+,
+ 
+tt
+.
+urlPath
+)
+            
+assert
+.
+Equal
+(
+t
+,
+ 
+code
+,
+ 
+tt
+.
+wantCode
+)
+            
+if
+ 
+tt
+.
+wantBody
+ 
+!=
+ 
+""
+ 
+{
+                
+assert
+.
+StringContains
+(
+t
+,
+ 
+body
+,
+ 
+tt
+.
+wantBody
+)
+            
+}
+        
+}
+)
+    
+}
+}
+When you run the tests again, everything should pass and you’ll see some output including
+the new 
+TestSnippetView
+ tests and which looks a bit like this:
+$ go test -v ./cmd/web/
+=== RUN   TestPing
+--- PASS: TestPing (0.00s)
+=== RUN   TestSnippetView
+=== RUN   TestSnippetView/Valid_ID
+=== RUN   TestSnippetView/Non-existent_ID
+=== RUN   TestSnippetView/Negative_ID
+=== RUN   TestSnippetView/Decimal_ID
+=== RUN   TestSnippetView/String_ID
+=== RUN   TestSnippetView/Empty_ID
+--- PASS: TestSnippetView (0.01s)
+    --- PASS: TestSnippetView/Valid_ID (0.00s)
+    --- PASS: TestSnippetView/Non-existent_ID (0.00s)
+    --- PASS: TestSnippetView/Negative_ID (0.00s)
+    --- PASS: TestSnippetView/Decimal_ID (0.00s)
+    --- PASS: TestSnippetView/String_ID (0.00s)
+    --- PASS: TestSnippetView/Empty_ID (0.00s)
+=== RUN   TestSecureHeaders
+--- PASS: TestSecureHeaders (0.00s)
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+=== RUN   TestHumanDate/Empty
+=== RUN   TestHumanDate/CET
+--- PASS: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+    --- PASS: TestHumanDate/Empty (0.00s)
+    --- PASS: TestHumanDate/CET (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.015sThere’s one new thing to point out here: notice how the names of the sub-tests have been
+canonicalized? Any spaces in the sub-test name have been replaced with an underscore (and
+any non-printable characters will also be escaped) in the test output.Chapter 14.6.
+Testing HTML forms
+In this chapter we’re going to add an end-to-end test for the 
+POST /user/signup
+ route, which
+is handled by our 
+userSignupPost
+ handler.
+Testing this route is made a bit more complicated by the anti-CSRF check that our application
+does. Any request that we make to 
+POST /user/signup
+ will always receive a 
+400 Bad Request
+response 
+unless
+ the request contains a valid CSRF token and cookie. To get around this we
+need to emulate the workflow of a real-life user as part of our test, like so:
+1
+. 
+Make a 
+GET /user/signup
+ request. This will return a response which contains a CSRF
+cookie in the response headers and the CSRF token for the signup page in the response
+body.
+2
+. 
+Extract the CSRF token from the HTML response body.
+3
+. 
+Make a 
+POST /user/signup
+ request, using the same 
+http.Client
+ that we used in step 1
+(so it automatically passes the CSRF cookie with the 
+POST
+ request) and including the CSRF
+token alongside the other 
+POST
+ data that we want to test.
+Let’s begin by adding a new helper function to our 
+cmd/web/testutils_test.go
+ file for
+extracting the CSRF token (if one exists) from a HTML response body:File: cmd/web/testutils_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"html"
+ 
+// New import
+    
+"io"
+    
+"log"
+    
+"net/http"
+    
+"net/http/cookiejar"
+    
+"net/http/httptest"
+    
+"regexp"
+ 
+// New import
+    
+"testing"
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/models/mocks"
+    
+"github.com/alexedwards/scs/v2"
+    
+"github.com/go-playground/form/v4"
+)
+// Define a regular expression which captures the CSRF token value from the
+// HTML for our user signup page.
+var
+ 
+csrfTokenRX
+ 
+=
+ 
+regexp
+.
+MustCompile
+(
+`
+<input type='hidden' name='csrf_token' value='(.+)'>
+`
+)
+func
+ 
+extractCSRFToken
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+body
+ 
+string
+)
+ 
+string
+ 
+{
+    
+// Use the FindStringSubmatch method to extract the token from the HTML body.
+    
+// Note that this returns an array with the entire matched pattern in the
+    
+// first position, and the values of any captured data in the subsequent
+    
+// positions.
+    
+matches
+ 
+:=
+ 
+csrfTokenRX
+.
+FindStringSubmatch
+(
+body
+)
+    
+if
+ 
+len
+(
+matches
+)
+ 
+<
+ 
+2
+ 
+{
+        
+t
+.
+Fatal
+(
+"no csrf token found in body"
+)
+    
+}
+    
+return
+ 
+html
+.
+UnescapeString
+(
+string
+(
+matches
+[
+1
+]
+)
+)
+}
+...
+Note:
+ You might be wondering why we are using the 
+html.UnescapeString()
+ function
+before returning the CSRF token. The reason for this is because Go’s 
+html/template
+package automatically escapes all dynamically rendered data… including our CSRF
+token. Because the CSRF token is a base64 encoded string it will potentially include the
++
+ character, and this will be escaped to 
+&#43;
+. So after extracting the token from the
+HTML we need to run it through 
+html.UnescapeString()
+ to get the original token value.
+Now that’s in place, let’s go back to our 
+cmd/web/handlers_test.go
+ file and create a new
+TestUserSignup
+ test.
+To start with, we’ll make this perform a 
+GET /user/signup
+ request and then extract and print
+out the CSRF token from the HTML response body. Like so:File: cmd/web/handlers_test.go
+package
+ 
+main
+...
+func
+ 
+TestUserSignup
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Create the application struct containing our mocked dependencies and set
+    
+// up the test server for running an end-to-end test.
+    
+app
+ 
+:=
+ 
+newTestApplication
+(
+t
+)
+    
+ts
+ 
+:=
+ 
+newTestServer
+(
+t
+,
+ 
+app
+.
+routes
+(
+)
+)
+    
+defer
+ 
+ts
+.
+Close
+(
+)
+    
+// Make a GET /user/signup request and then extract the CSRF token from the
+    
+// response body.
+    
+_
+,
+ 
+_
+,
+ 
+body
+ 
+:=
+ 
+ts
+.
+get
+(
+t
+,
+ 
+"/user/signup"
+)
+    
+csrfToken
+ 
+:=
+ 
+extractCSRFToken
+(
+t
+,
+ 
+body
+)
+    
+// Log the CSRF token value in our test output using the t.Logf() function. 
+    
+// The t.Logf() function works in the same way as fmt.Printf(), but writes 
+    
+// the provided message to the test output.
+    
+t
+.
+Logf
+(
+"CSRF token is: %q"
+,
+ 
+csrfToken
+)
+}
+Importantly, you must run tests using the 
+-v
+ flag (to enable verbose output) in order to see
+any output from the 
+t.Logf()
+ function.
+Let’s go ahead and do that now:
+$ go test -v -run="TestUserSignup" ./cmd/web/
+=== RUN   TestUserSignup
+    handlers_test.go:81: CSRF token is: "C92tcpQpL1n6aIUaF8XAonwy+YjcVnyaAaOvfkdl6vJqoNSbgaTtdBRC61pFMoGP2ojV+sZ1d0SUikah3mfREQ=="
+--- PASS: TestUserSignup (0.01s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.010s
+OK, that looks like it’s working. The test is running without any problems and printing out the
+CSRF token that we’ve extracted from the response body HTML.
+Note:
+ If you run this test for a second time immediately afterwards, without changing
+anything in the 
+cmd/web
+ package, you’ll get the same CSRF token in the test output
+because the test results have been cached
+.
+Testing post requests
+Now let’s head back to our 
+cmd/web/testutils_test.go
+ file and create a new 
+postForm()
+method on our 
+testServer
+ type, which we can use to send a 
+POST
+ request to our test server
+with specific form data in the request body.Go ahead and add the following code (which follows the same general pattern that we used
+for the 
+get()
+ method earlier in the book):
+File: cmd/web/testutils_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"html"
+    
+"io"
+    
+"log"
+    
+"net/http"
+    
+"net/http/cookiejar"
+    
+"net/http/httptest"
+    
+"net/url"
+ 
+// New import
+    
+"regexp"
+    
+"testing"
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/models/mocks"
+    
+"github.com/alexedwards/scs/v2"
+    
+"github.com/go-playground/form/v4"
+)
+...
+// Create a postForm method for sending POST requests to the test server. The
+// final parameter to this method is a url.Values object which can contain any
+// form data that you want to send in the request body.
+func
+ 
+(
+ts
+ 
+*
+testServer
+)
+ 
+postForm
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+urlPath
+ 
+string
+,
+ 
+form
+ 
+url
+.
+Values
+)
+ 
+(
+int
+,
+ 
+http
+.
+Header
+,
+ 
+string
+)
+ 
+{
+    
+rs
+,
+ 
+err
+ 
+:=
+ 
+ts
+.
+Client
+(
+)
+.
+PostForm
+(
+ts
+.
+URL
++
+urlPath
+,
+ 
+form
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Read the response body from the test server.
+    
+defer
+ 
+rs
+.
+Body
+.
+Close
+(
+)
+    
+body
+,
+ 
+err
+ 
+:=
+ 
+io
+.
+ReadAll
+(
+rs
+.
+Body
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+bytes
+.
+TrimSpace
+(
+body
+)
+    
+// Return the response status, headers and body.
+    
+return
+ 
+rs
+.
+StatusCode
+,
+ 
+rs
+.
+Header
+,
+ 
+string
+(
+body
+)
+}
+And now, at last, we’re ready to add some table-driven sub-tests to test the behavior of our
+application’s 
+POST /user/signup
+ route. Specifically, we want to test that:
+A valid signup results in a 
+303 See Other
+ response.
+A form submission without a valid CSRF token results in a 
+400 Bad Request
+ response.
+A invalid from submission results in a 
+422 Unprocessable Entity
+ response and the signup
+form being redisplayed. This should happen when:The name, email or password fields are empty.
+The email is not in a valid format.
+The password is less than 8 characters long.
+The email address is already in use.
+Go ahead and update the 
+TestUserSignup
+ function to carry out these tests like so:
+File: cmd/web/handlers_test.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+    
+"net/url"
+ 
+// New import
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+...
+func
+ 
+TestUserSignup
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+app
+ 
+:=
+ 
+newTestApplication
+(
+t
+)
+    
+ts
+ 
+:=
+ 
+newTestServer
+(
+t
+,
+ 
+app
+.
+routes
+(
+)
+)
+    
+defer
+ 
+ts
+.
+Close
+(
+)
+    
+_
+,
+ 
+_
+,
+ 
+body
+ 
+:=
+ 
+ts
+.
+get
+(
+t
+,
+ 
+"/user/signup"
+)
+    
+validCSRFToken
+ 
+:=
+ 
+extractCSRFToken
+(
+t
+,
+ 
+body
+)
+    
+const
+ 
+(
+        
+validName
+     
+=
+ 
+"Bob"
+        
+validPassword
+ 
+=
+ 
+"validPa$$word"
+        
+validEmail
+    
+=
+ 
+"bob@example.com"
+        
+formTag
+       
+=
+ 
+"<form action='/user/signup' method='POST' novalidate>"
+    
+)
+    
+tests
+ 
+:=
+ 
+[
+]
+struct
+ 
+{
+        
+name
+         
+string
+        
+userName
+     
+string
+        
+userEmail
+    
+string
+        
+userPassword
+ 
+string
+        
+csrfToken
+    
+string
+        
+wantCode
+     
+int
+        
+wantFormTag
+  
+string
+    
+}
+{
+        
+{
+            
+name
+:
+         
+"Valid submission"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+validEmail
+,
+            
+userPassword
+:
+ 
+validPassword
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusSeeOther
+,
+        
+}
+,
+        
+{
+            
+name
+:
+         
+"Invalid CSRF Token"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+validEmail
+,
+            
+userPassword
+:
+ 
+validPassword
+,
+            
+csrfToken
+:
+    
+"wrongToken"
+,
+            
+wantCode
+:
+     
+http
+.
+StatusBadRequest
+,
+        
+}
+,
+        
+{        
+{
+            
+name
+:
+         
+"Empty name"
+,
+            
+userName
+:
+     
+""
+,
+            
+userEmail
+:
+    
+validEmail
+,
+            
+userPassword
+:
+ 
+validPassword
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusUnprocessableEntity
+,
+            
+wantFormTag
+:
+  
+formTag
+,
+        
+}
+,
+        
+{
+            
+name
+:
+         
+"Empty email"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+""
+,
+            
+userPassword
+:
+ 
+validPassword
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusUnprocessableEntity
+,
+            
+wantFormTag
+:
+  
+formTag
+,
+        
+}
+,
+        
+{
+            
+name
+:
+         
+"Empty password"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+validEmail
+,
+            
+userPassword
+:
+ 
+""
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusUnprocessableEntity
+,
+            
+wantFormTag
+:
+  
+formTag
+,
+        
+}
+,
+        
+{
+            
+name
+:
+         
+"Invalid email"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+"bob@example."
+,
+            
+userPassword
+:
+ 
+validPassword
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusUnprocessableEntity
+,
+            
+wantFormTag
+:
+  
+formTag
+,
+        
+}
+,
+        
+{
+            
+name
+:
+         
+"Short password"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+validEmail
+,
+            
+userPassword
+:
+ 
+"pa$$"
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusUnprocessableEntity
+,
+            
+wantFormTag
+:
+  
+formTag
+,
+        
+}
+,
+        
+{
+            
+name
+:
+         
+"Duplicate email"
+,
+            
+userName
+:
+     
+validName
+,
+            
+userEmail
+:
+    
+"dupe@example.com"
+,
+            
+userPassword
+:
+ 
+validPassword
+,
+            
+csrfToken
+:
+    
+validCSRFToken
+,
+            
+wantCode
+:
+     
+http
+.
+StatusUnprocessableEntity
+,
+            
+wantFormTag
+:
+  
+formTag
+,
+        
+}
+,
+    
+}
+    
+for
+ 
+_
+,
+ 
+tt
+ 
+:=
+ 
+range
+ 
+tests
+ 
+{
+        
+t
+.
+Run
+(
+tt
+.
+name
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+            
+form
+ 
+:=
+ 
+url
+.
+Values
+{
+}
+            
+form
+.
+Add
+(
+"name"
+,
+ 
+tt
+.
+userName
+)
+            
+form
+.
+Add
+(
+"email"
+,
+ 
+tt
+.
+userEmail
+)
+            
+form
+.
+Add
+(
+"password"
+,
+ 
+tt
+.
+userPassword
+)
+            
+form
+.
+Add
+(
+"csrf_token"
+,
+ 
+tt
+.
+csrfToken
+)
+            
+code
+,
+ 
+_
+,
+ 
+body
+ 
+:=
+ 
+ts
+.
+postForm
+(
+t
+,
+ 
+"/user/signup"
+,
+ 
+form
+)
+            
+assert
+.
+Equal
+(
+t
+,
+ 
+code
+,
+ 
+tt
+.
+wantCode
+)
+            
+if
+ 
+tt
+.
+wantFormTag
+ 
+!=
+ 
+""
+ 
+{            
+if
+ 
+tt
+.
+wantFormTag
+ 
+!=
+ 
+""
+ 
+{
+                
+assert
+.
+StringContains
+(
+t
+,
+ 
+body
+,
+ 
+tt
+.
+wantFormTag
+)
+            
+}
+        
+}
+)
+    
+}
+}
+If you run the test, you should see that all the sub-tests run and pass successfully — similar to
+this:
+$ go test -v -run="TestUserSignup" ./cmd/web/
+=== RUN   TestUserSignup
+=== RUN   TestUserSignup/Valid_submission
+=== RUN   TestUserSignup/Invalid_CSRF_Token
+=== RUN   TestUserSignup/Empty_name
+=== RUN   TestUserSignup/Empty_email
+=== RUN   TestUserSignup/Empty_password
+=== RUN   TestUserSignup/Invalid_email
+=== RUN   TestUserSignup/Short_password
+=== RUN   TestUserSignup/Long_password
+=== RUN   TestUserSignup/Duplicate_email
+--- PASS: TestUserSignup (0.01s)
+    --- PASS: TestUserSignup/Valid_submission (0.00s)
+    --- PASS: TestUserSignup/Invalid_CSRF_Token (0.00s)
+    --- PASS: TestUserSignup/Empty_name (0.00s)
+    --- PASS: TestUserSignup/Empty_email (0.00s)
+    --- PASS: TestUserSignup/Empty_password (0.00s)
+    --- PASS: TestUserSignup/Invalid_email (0.00s)
+    --- PASS: TestUserSignup/Short_password (0.00s)
+    --- PASS: TestUserSignup/Long_password (0.00s)
+    --- PASS: TestUserSignup/Duplicate_email (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.016sChapter 14.7.
+Integration testing
+Running end-to-end tests with mocked dependencies is a good thing to do, but we could
+improve confidence in our application even more if we also verify that our real MySQL
+database models are working as expected.
+To do this we can run 
+integration tests
+ against a test version our MySQL database, which
+mimics our production database
+ but exists for testing purposes only.
+As a demonstration, in this chapter we’ll setup an integration test to ensure that our
+models.UserModel.Exists()
+ method is working correctly.
+Test database setup and teardown
+The first step is to create the test version of our MySQL database.
+If you’re following along, connect to MySQL from your terminal window as the 
+root
+ user and
+execute the following SQL statements to create a new 
+test_snippetbox
+ database and
+test_web
+ user:
+CREATE
+ 
+DATABASE
+ 
+test_snippetbox
+ 
+CHARACTER
+ 
+SET
+ 
+utf8mb4
+ 
+COLLATE
+ 
+utf8mb4_unicode_ci
+;
+CREATE
+ 
+USER
+ 
+'
+test_web
+'
+@
+'
+localhost
+'
+;
+GRANT
+ 
+CREATE
+,
+ 
+DROP
+,
+ 
+ALTER
+,
+ 
+INDEX
+,
+ 
+SELECT
+,
+ 
+INSERT
+,
+ 
+UPDATE
+,
+ 
+DELETE
+ 
+ON
+ 
+test_snippetbox
+.
+*
+ 
+TO
+ 
+'
+test_web
+'
+@
+'
+localhost
+'
+;
+ALTER
+ 
+USER
+ 
+'
+test_web
+'
+@
+'
+localhost
+'
+ 
+IDENTIFIED
+ 
+BY
+ 
+'
+pass
+'
+;
+Once that’s done, let’s make two SQL scripts:
+1
+. 
+A 
+setup script
+ to create the database tables (so that they mimic our production database)
+and insert a known set of test data than we can work with in our tests.
+2
+. 
+A 
+teardown script
+ which drops the database tables and any data.
+The idea is that we’ll call these scripts at the start and end of each integration test, so that the
+test database is fully reset each time. This helps ensure that any changes we make during one
+test are not ‘leaking’ and affecting the results of another test.
+Let’s go ahead and create these scripts in a new 
+internal/models/testdata
+ directory like so:$ mkdir internal/models/testdata
+$ touch internal/models/testdata/setup.sql
+$ touch internal/models/testdata/teardown.sql
+File: internal/models/testdata/setup.sql
+CREATE
+ 
+TABLE
+ 
+snippets
+ 
+(
+    
+id
+ 
+INTEGER
+ 
+NOT
+ 
+NULL
+ 
+PRIMARY
+ 
+KEY
+ 
+AUTO_INCREMENT
+,
+    
+title
+ 
+VARCHAR
+(
+100
+)
+ 
+NOT
+ 
+NULL
+,
+    
+content
+ 
+TEXT
+ 
+NOT
+ 
+NULL
+,
+    
+created
+ 
+DATETIME
+ 
+NOT
+ 
+NULL
+,
+    
+expires
+ 
+DATETIME
+ 
+NOT
+ 
+NULL
+)
+;
+CREATE
+ 
+INDEX
+ 
+idx_snippets_created
+ 
+ON
+ 
+snippets
+(
+created
+)
+;
+CREATE
+ 
+TABLE
+ 
+users
+ 
+(
+    
+id
+ 
+INTEGER
+ 
+NOT
+ 
+NULL
+ 
+PRIMARY
+ 
+KEY
+ 
+AUTO_INCREMENT
+,
+    
+name
+ 
+VARCHAR
+(
+255
+)
+ 
+NOT
+ 
+NULL
+,
+    
+email
+ 
+VARCHAR
+(
+255
+)
+ 
+NOT
+ 
+NULL
+,
+    
+hashed_password
+ 
+CHAR
+(
+60
+)
+ 
+NOT
+ 
+NULL
+,
+    
+created
+ 
+DATETIME
+ 
+NOT
+ 
+NULL
+)
+;
+ALTER
+ 
+TABLE
+ 
+users
+ 
+ADD
+ 
+CONSTRAINT
+ 
+users_uc_email
+ 
+UNIQUE
+ 
+(
+email
+)
+;
+INSERT
+ 
+INTO
+ 
+users
+ 
+(
+name
+,
+ 
+email
+,
+ 
+hashed_password
+,
+ 
+created
+)
+ 
+VALUES
+ 
+(
+    
+'
+Alice Jones
+'
+,
+    
+'
+alice@example.com
+'
+,
+    
+'
+$2a$12$NuTjWXm3KKntReFwyBVHyuf/to.HEwTy.eS206TNfkGfr6HzGJSWG
+'
+,
+    
+'
+2022-01-01 10:00:00
+'
+)
+;
+File: internal/models/testdata/teardown.sql
+DROP
+ 
+TABLE
+ 
+users
+;
+DROP
+ 
+TABLE
+ 
+snippets
+;
+Note:
+ The Go tool ignores any directories called 
+testdata
+, so these scripts will be
+ignored when compiling your application (it also ignores any directories or files which
+have names that begin with an 
+_
+ or 
+.
+ character too).
+Alright, now that we’ve got the scripts in place let’s create a new file to hold some helper
+functions for our integration tests:
+$ touch internal/models/testutils_test.go
+And add to it a 
+newTestDB()
+ helper function which:Creates a new 
+*sql.DB
+ connection pool for the test database;
+Executes the 
+setup.sql
+ script to create the database tables and dummy data;
+Register a ‘cleanup’ function which executes the 
+teardown.sql
+ script and closes the
+connection pool.
+File: internal/models/testutils_test.go
+package
+ 
+models
+import
+ 
+(
+    
+"database/sql"
+    
+"os"
+    
+"testing"
+)
+func
+ 
+newTestDB
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+*
+sql
+.
+DB
+ 
+{
+    
+// Establish a sql.DB connection pool for our test database. Because our
+    
+// setup and teardown scripts contains multiple SQL statements, we need
+    
+// to use the "multiStatements=true" parameter in our DSN. This instructs
+    
+// our MySQL database driver to support executing multiple SQL statements
+    
+// in one db.Exec() call.
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+sql
+.
+Open
+(
+"mysql"
+,
+ 
+"test_web:pass@/test_snippetbox?parseTime=true&multiStatements=true"
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Read the setup SQL script from file and execute the statements.
+    
+script
+,
+ 
+err
+ 
+:=
+ 
+os
+.
+ReadFile
+(
+"./testdata/setup.sql"
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+_
+,
+ 
+err
+ 
+=
+ 
+db
+.
+Exec
+(
+string
+(
+script
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Use the t.Cleanup() to register a function *which will automatically be
+    
+// called by Go when the current test (or sub-test) which calls newTestDB() 
+    
+// has finished*. In this function we read and execute the teardown script, 
+    
+// and close the database connection pool.
+    
+t
+.
+Cleanup
+(
+func
+(
+)
+ 
+{
+        
+script
+,
+ 
+err
+ 
+:=
+ 
+os
+.
+ReadFile
+(
+"./testdata/teardown.sql"
+)
+        
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+            
+t
+.
+Fatal
+(
+err
+)
+        
+}
+        
+_
+,
+ 
+err
+ 
+=
+ 
+db
+.
+Exec
+(
+string
+(
+script
+)
+)
+        
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+            
+t
+.
+Fatal
+(
+err
+)
+        
+}
+        
+db
+.
+Close
+(
+)
+    
+}
+)
+    
+// Return the database connection pool.
+    
+return
+ 
+db
+}
+Testing the UserModel.Exists methodNow the preparatory work is done we’re ready to actually write our integration test for the
+models.UserModel.Exists()
+ method.
+We know that our 
+setup.sql
+ script creates a 
+users
+ table containing one record (which should
+have the user ID 
+1
+ and email address 
+alice@example.com
+). So we want to test that:
+Calling 
+models.UserModel.Exists(1)
+ returns a 
+true
+ boolean value and a 
+nil
+ error value.
+Calling 
+models.UserModel.Exists()
+ with any other user ID returns a 
+false
+ boolean value
+and a 
+nil
+ error value.
+Let’s first head to our 
+internal/assert
+ package and create a new 
+NilError()
+ assertion,
+which we will use to check that an error value is 
+nil
+. Like so:
+File: internal/assert/assert.go
+package
+ 
+assert
+...
+func
+ 
+NilError
+(
+t
+ 
+*
+testing
+.
+T
+,
+ 
+actual
+ 
+error
+)
+ 
+{
+    
+t
+.
+Helper
+(
+)
+    
+if
+ 
+actual
+ 
+!=
+ 
+nil
+ 
+{
+        
+t
+.
+Errorf
+(
+"got: %v; expected: nil"
+,
+ 
+actual
+)
+    
+}
+}
+Then let’s follow the Go conventions and create a new 
+users_test.go
+ file for our test, directly
+alongside the code being tested:
+$ touch internal/models/users_test.go
+And add a 
+TestUserModelExists
+ test containing the following code:File: internal/models/users_test.go
+package
+ 
+models
+import
+ 
+(
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+func
+ 
+TestUserModelExists
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Set up a suite of table-driven tests and expected results.
+    
+tests
+ 
+:=
+ 
+[
+]
+struct
+ 
+{
+        
+name
+   
+string
+        
+userID
+ 
+int
+        
+want
+   
+bool
+    
+}
+{
+        
+{
+            
+name
+:
+   
+"Valid ID"
+,
+            
+userID
+:
+ 
+1
+,
+            
+want
+:
+   
+true
+,
+        
+}
+,
+        
+{
+            
+name
+:
+   
+"Zero ID"
+,
+            
+userID
+:
+ 
+0
+,
+            
+want
+:
+   
+false
+,
+        
+}
+,
+        
+{
+            
+name
+:
+   
+"Non-existent ID"
+,
+            
+userID
+:
+ 
+2
+,
+            
+want
+:
+   
+false
+,
+        
+}
+,
+    
+}
+    
+for
+ 
+_
+,
+ 
+tt
+ 
+:=
+ 
+range
+ 
+tests
+ 
+{
+        
+t
+.
+Run
+(
+tt
+.
+name
+,
+ 
+func
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+            
+// Call the newTestDB() helper function to get a connection pool to
+            
+// our test database. Calling this here -- inside t.Run() -- means
+            
+// that fresh database tables and data will be set up and torn down
+            
+// for each sub-test.
+            
+db
+ 
+:=
+ 
+newTestDB
+(
+t
+)
+            
+// Create a new instance of the UserModel.
+            
+m
+ 
+:=
+ 
+UserModel
+{
+db
+}
+            
+// Call the UserModel.Exists() method and check that the return
+            
+// value and error match the expected values for the sub-test.
+            
+exists
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+Exists
+(
+tt
+.
+userID
+)
+            
+assert
+.
+Equal
+(
+t
+,
+ 
+exists
+,
+ 
+tt
+.
+want
+)
+            
+assert
+.
+NilError
+(
+t
+,
+ 
+err
+)
+        
+}
+)
+    
+}
+}
+If you run this test, then everything should pass without any problems.$ go test -v ./internal/models
+=== RUN   TestUserModelExists
+=== RUN   TestUserModelExists/Valid_ID
+=== RUN   TestUserModelExists/Zero_ID
+=== RUN   TestUserModelExists/Non-existent_ID
+--- PASS: TestUserModelExists (1.02s)
+    --- PASS: TestUserModelExists/Valid_ID (0.33s)
+    --- PASS: TestUserModelExists/Zero_ID (0.29s)
+    --- PASS: TestUserModelExists/Non-existent_ID (0.40s)
+PASS
+ok      snippetbox.alexedwards.net/internal/models      1.023s
+The last line in the test output here is worth a mention. The total runtime for this test (1.023
+seconds in my case) is much longer than for our previous tests — all of which took a few
+milliseconds to run. This big increase in runtime is primarily due to the large number of
+database operations that we needed to make during the tests.
+While 1 second is a totally acceptable time to wait for this test in isolation, if you’re running
+hundreds of different integration tests against your database you might end up routinely
+waiting minutes — rather than seconds — for your tests to finish.
+Skipping long-running tests
+When your tests take a long time, you might decide that you want to skip specific long-
+running tests under certain circumstances. For example, you might decide to only run your
+integration tests before committing a change, instead of more frequently during
+development.
+A common and idiomatic way to skip long-running tests is to use the 
+testing.Short()
+function to check for the presence of a 
+-short
+ flag in your 
+go test
+ command, and then call
+the 
+t.Skip()
+ method to skip the test if the flag is present.
+Let’s quickly update our 
+TestUserModelExists
+ test to do this 
+before running its tests
+, like so:File: internal/models/users_test.go
+package
+ 
+models
+import
+ 
+(
+    
+"testing"
+    
+"snippetbox.alexedwards.net/internal/assert"
+)
+func
+ 
+TestUserModelExists
+(
+t
+ 
+*
+testing
+.
+T
+)
+ 
+{
+    
+// Skip the test if the "-short" flag is provided when running the test.
+    
+if
+ 
+testing
+.
+Short
+(
+)
+ 
+{
+        
+t
+.
+Skip
+(
+"models: skipping integration test"
+)
+    
+}
+    
+...
+}
+And then try running our tests with the 
+-short
+ flag enabled:$ go test -v -short ./...
+=== RUN   TestPing
+--- PASS: TestPing (0.00s)
+=== RUN   TestSnippetView
+=== RUN   TestSnippetView/Valid_ID
+=== RUN   TestSnippetView/Non-existent_ID
+=== RUN   TestSnippetView/Negative_ID
+=== RUN   TestSnippetView/Decimal_ID
+=== RUN   TestSnippetView/String_ID
+=== RUN   TestSnippetView/Empty_ID
+--- PASS: TestSnippetView (0.01s)
+    --- PASS: TestSnippetView/Valid_ID (0.00s)
+    --- PASS: TestSnippetView/Non-existent_ID (0.00s)
+    --- PASS: TestSnippetView/Negative_ID (0.00s)
+    --- PASS: TestSnippetView/Decimal_ID (0.00s)
+    --- PASS: TestSnippetView/String_ID (0.00s)
+    --- PASS: TestSnippetView/Empty_ID (0.00s)
+=== RUN   TestUserSignup
+=== RUN   TestUserSignup/Valid_submission
+=== RUN   TestUserSignup/Invalid_CSRF_Token
+=== RUN   TestUserSignup/Empty_name
+=== RUN   TestUserSignup/Empty_email
+=== RUN   TestUserSignup/Empty_password
+=== RUN   TestUserSignup/Invalid_email
+=== RUN   TestUserSignup/Short_password
+=== RUN   TestUserSignup/Long_password
+=== RUN   TestUserSignup/Duplicate_email
+--- PASS: TestUserSignup (0.01s)
+    --- PASS: TestUserSignup/Valid_submission (0.00s)
+    --- PASS: TestUserSignup/Invalid_CSRF_Token (0.00s)
+    --- PASS: TestUserSignup/Empty_name (0.00s)
+    --- PASS: TestUserSignup/Empty_email (0.00s)
+    --- PASS: TestUserSignup/Empty_password (0.00s)
+    --- PASS: TestUserSignup/Invalid_email (0.00s)
+    --- PASS: TestUserSignup/Short_password (0.00s)
+    --- PASS: TestUserSignup/Long_password (0.00s)
+    --- PASS: TestUserSignup/Duplicate_email (0.00s)
+=== RUN   TestSecureHeaders
+--- PASS: TestSecureHeaders (0.00s)
+=== RUN   TestHumanDate
+=== RUN   TestHumanDate/UTC
+=== RUN   TestHumanDate/Empty
+=== RUN   TestHumanDate/CET
+--- PASS: TestHumanDate (0.00s)
+    --- PASS: TestHumanDate/UTC (0.00s)
+    --- PASS: TestHumanDate/Empty (0.00s)
+    --- PASS: TestHumanDate/CET (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/cmd/web      0.023s
+=== RUN   TestUserModelExists
+    users_test.go:10: models: skipping integration test
+--- SKIP: TestUserModelExists (0.00s)
+PASS
+ok      snippetbox.alexedwards.net/internal/models      0.003s
+?       snippetbox.alexedwards.net/internal/models/mocks        [no test files]
+?       snippetbox.alexedwards.net/internal/validator   [no test files]
+?       snippetbox.alexedwards.net/ui   [no test files]
+Notice the 
+SKIP
+ annotation in the output above? This confirms that Go skipped our
+TestUserModelExists
+ test during this run.
+If you like, feel free to run this again without the 
+-short
+ flag, and you should see that the
+TestUserModelExists
+ test is executed as normal.Chapter 14.8.
+Profiling test coverage
+A great feature of the 
+go test
+ tool is the metrics and visualizations that it provides for 
+test
+coverage
+.
+Go ahead and try running the tests in our project using the 
+-cover
+ flag like so:
+$ go test -cover ./...
+ok   snippetbox.alexedwards.net/cmd/web 0.022s coverage: 46.1% of statements
+?    snippetbox.alexedwards.net/internal/assert [no test files]
+ok   snippetbox.alexedwards.net/internal/models 1.081s coverage: 6.5% of statements
+?    snippetbox.alexedwards.net/internal/models/mocks [no test files]
+?    snippetbox.alexedwards.net/internal/validator [no test files]
+?    snippetbox.alexedwards.net/ui [no test files]
+From the results here we can see that 46.1% of the statements in our 
+cmd/web
+ package are
+executed during our tests, and for our 
+internal/models
+ package the figure is 6.5%.
+Note:
+ Your numbers may be slightly different depending on the exact version of the
+book you’re reading, or if you’ve made any adaptations to the code as you’ve been
+following along.
+We can get a more detailed breakdown of test coverage 
+by method and function
+ by using the
+-coverprofile
+ flag like so:
+$ go test -coverprofile=/tmp/profile.out ./...
+This will execute your tests as normal and — if all your tests pass — it will then write a
+coverage profile
+ to a specific location (in our case 
+/tmp/profile.out
+).
+You can then view the coverage profile by using the 
+go tool cover
+ command like so:$ go tool cover -func=/tmp/profile.out
+snippetbox.alexedwards.net/cmd/web/handlers.go:15:      home           0.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:31:      snippetView          92.9%
+snippetbox.alexedwards.net/cmd/web/handlers.go:56:      snippetCreate      0.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:82:      snippetCreatePost     0.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:126:      userSignup          100.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:132:      userSignupPost      88.5%
+snippetbox.alexedwards.net/cmd/web/handlers.go:192:      userLogin          0.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:198:      userLoginPost      0.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:256:      userLogoutPost      0.0%
+snippetbox.alexedwards.net/cmd/web/handlers.go:277:      ping           100.0%
+snippetbox.alexedwards.net/cmd/web/helpers.go:17:      serverError          0.0%
+snippetbox.alexedwards.net/cmd/web/helpers.go:27:      clientError          100.0%
+snippetbox.alexedwards.net/cmd/web/helpers.go:34:      notFound          100.0%
+snippetbox.alexedwards.net/cmd/web/helpers.go:38:      newTemplateData      100.0%
+snippetbox.alexedwards.net/cmd/web/helpers.go:47:      render           58.3%
+snippetbox.alexedwards.net/cmd/web/helpers.go:79:      decodePostForm      50.0%
+snippetbox.alexedwards.net/cmd/web/helpers.go:108:      isAuthenticated      75.0%
+snippetbox.alexedwards.net/cmd/web/main.go:31:       main           0.0%
+snippetbox.alexedwards.net/cmd/web/main.go:95:       openDB           0.0%
+snippetbox.alexedwards.net/cmd/web/middleware.go:11:  secureHeaders      100.0%
+snippetbox.alexedwards.net/cmd/web/middleware.go:27:  logRequest          100.0%
+snippetbox.alexedwards.net/cmd/web/middleware.go:35:  recoverPanic      66.7%
+snippetbox.alexedwards.net/cmd/web/middleware.go:55:  requireAuthentication 16.7%
+snippetbox.alexedwards.net/cmd/web/middleware.go:78:  noSurf           100.0%
+snippetbox.alexedwards.net/cmd/web/middleware.go:90:  authenticate      38.5%
+snippetbox.alexedwards.net/cmd/web/routes.go:12:      routes           100.0%
+snippetbox.alexedwards.net/cmd/web/templates.go:23:      humanDate          100.0%
+snippetbox.alexedwards.net/cmd/web/templates.go:40:      newTemplateCache     83.3%
+snippetbox.alexedwards.net/internal/models/snippets.go:31: Insert           0.0%
+snippetbox.alexedwards.net/internal/models/snippets.go:61: Get               0.0%
+snippetbox.alexedwards.net/internal/models/snippets.go:98: Latest           0.0%
+snippetbox.alexedwards.net/internal/models/users.go:36:  Insert           0.0%
+snippetbox.alexedwards.net/internal/models/users.go:68:  Authenticate      0.0%
+snippetbox.alexedwards.net/internal/models/users.go:100: Exists           100.0%
+total:                                (statements)      38.1%
+An alternative and more visual way to view the coverage profile is to use the 
+-html
+ flag
+instead of 
+-func
+.
+$ go tool cover -html=/tmp/profile.out
+This will open a browser window containing a navigable and highlighted representation of
+your code, similar to this:It’s easy to see exactly which statements get executed during your tests (colored green) and
+which are not (highlighted red).
+You can take this a step further and use the 
+-covermode=count
+ option when running 
+go test
+like so:
+$ go test -covermode=count -coverprofile=/tmp/profile.out ./...
+$ go tool cover -html=/tmp/profile.out
+Instead of just highlighting the statements in green and red, using 
+-covermode=count
+ makes
+the coverage profile record the exact 
+number of times
+ that each statement is executed during
+the tests.
+When viewed in the browser, statements which are executed more frequently are then shown
+in a more saturated shade of green, similar to this:Note:
+ If you’re running some of your tests in parallel, you should use the
+-covermode=atomic
+ flag (instead of 
+-covermode=count
+) to ensure an accurate count.

@@ -1,0 +1,4250 @@
+Chapter 4.
+Database-driven responses
+For our Snippetbox web application to become truly useful we need somewhere to store (or
+persist
+) the data entered by users, and the ability to query this data store dynamically at
+runtime.
+There are many different data stores we 
+could
+ use for our application — each with different
+pros and cons — but we’ll opt for the popular relational database 
+MySQL
+.
+Note:
+ All of the general code patterns in this section of the book also apply to other
+databases like PostgreSQL or SQLite too. If you’re following along and would prefer to
+use an alternative database, you can, but I recommend using MySQL for now to get a
+feeling for how everything works and then swapping databases as a practice exercise
+once you’ve finished the book.
+In this section you’ll learn how to:
+Install a database driver
+ to act as a ‘middleman’ between MySQL and your Go application.
+Connect to MySQL
+ from your web application (specifically, you’ll learn how to establish a
+pool of reusable connections).
+Create a 
+standalone 
+models
+ package
+, so that your database logic is reusable and
+decoupled from your web application.
+Use the appropriate functions in Go’s 
+database/sql
+ package to 
+execute different types of
+SQL statements, and how to avoid common errors that can lead to your server running out
+of resources.
+Prevent SQL injection
+ attacks by correctly using placeholder parameters.
+Use 
+transactions
+, so that you can execute multiple SQL statements in one atomic action.Chapter 4.1.
+Setting up MySQL
+If you’re following along, you’ll need to install MySQL on your computer at this point. The
+official MySQL documentation contains comprehensive 
+installation instructions
+ for all types
+of operating systems, but if you’re using Mac OS you should be able to install it with:
+$ brew install mysql
+Or if you’re using a Linux distribution which supports 
+apt
+ (like Debian and Ubuntu) you can
+install it with:
+$ sudo apt install mysql-server
+While you are installing MySQL you might be asked to set a password for the 
+root
+ user.
+Remember to keep a mental note of this if you are; you’ll need it in the next step.
+Scaffolding the database
+Once MySQL is installed you should be able to connect to it from your terminal as the 
+root
+user. The command to do this will vary depending on the version of MySQL that you’ve got
+installed. For MySQL 5.7 and newer you should be able to connect by typing this:
+$ sudo mysql
+mysql>
+But if that doesn’t work then try the following command instead, entering the 
+password that
+you set during the installation.
+$ mysql -u root -p
+Enter password:
+mysql>
+Once connected, the first thing we need to do is establish a 
+database
+ in MySQL to store all the
+data for our project. Copy and paste the following commands into the mysql prompt to
+create a new 
+snippetbox
+ database using UTF8 encoding.-- Create a new UTF-8 `snippetbox` database.
+CREATE
+ 
+DATABASE
+ 
+snippetbox
+ 
+CHARACTER
+ 
+SET
+ 
+utf8mb4
+ 
+COLLATE
+ 
+utf8mb4_unicode_ci
+;
+-- Switch to using the `snippetbox` database.
+USE
+ 
+snippetbox
+;
+Then copy and paste the following SQL statement to create a new 
+snippets
+ table to hold the
+text snippets for our application:
+-- Create a `snippets` table.
+CREATE
+ 
+TABLE
+ 
+snippets
+ 
+(
+    
+id
+ 
+INTEGER
+ 
+NOT
+ 
+NULL
+ 
+PRIMARY
+ 
+KEY
+ 
+AUTO_INCREMENT
+,
+    
+title
+ 
+VARCHAR
+(
+100
+)
+ 
+NOT
+ 
+NULL
+,
+    
+content
+ 
+TEXT
+ 
+NOT
+ 
+NULL
+,
+    
+created
+ 
+DATETIME
+ 
+NOT
+ 
+NULL
+,
+    
+expires
+ 
+DATETIME
+ 
+NOT
+ 
+NULL
+)
+;
+-- Add an index on the created column.
+CREATE
+ 
+INDEX
+ 
+idx_snippets_created
+ 
+ON
+ 
+snippets
+(
+created
+)
+;
+Each record in this table will have an integer 
+id
+ field which will act as the unique identifier for
+the text snippet. It will also have a short text 
+title
+ and the snippet content itself will be
+stored in the 
+content
+ field. We’ll also keep some metadata about the times that the snippet
+was 
+created
+ and when it 
+expires
+.
+Let’s also add some placeholder entries to the 
+snippets
+ table (which we’ll use in the next
+couple of chapters). I’ll use some short haiku as the content for the text snippets, but it really
+doesn’t matter what they contain.
+-- Add some dummy records (which we'll use in the next couple of chapters).
+INSERT
+ 
+INTO
+ 
+snippets
+ 
+(
+title
+,
+ 
+content
+,
+ 
+created
+,
+ 
+expires
+)
+ 
+VALUES
+ 
+(
+    
+'
+An old silent pond
+'
+,
+    
+'
+An old silent pond...\nA frog jumps into the pond,\nsplash! Silence again.\n\n– Matsuo Bash
+ō
+'
+,
+    
+UTC_TIMESTAMP
+(
+)
+,
+    
+DATE_ADD
+(
+UTC_TIMESTAMP
+(
+)
+,
+ 
+INTERVAL
+ 
+365
+ 
+DAY
+)
+)
+;
+INSERT
+ 
+INTO
+ 
+snippets
+ 
+(
+title
+,
+ 
+content
+,
+ 
+created
+,
+ 
+expires
+)
+ 
+VALUES
+ 
+(
+    
+'
+Over the wintry forest
+'
+,
+    
+'
+Over the wintry\nforest, winds howl in rage\nwith no leaves to blow.\n\n– Natsume Soseki
+'
+,
+    
+UTC_TIMESTAMP
+(
+)
+,
+    
+DATE_ADD
+(
+UTC_TIMESTAMP
+(
+)
+,
+ 
+INTERVAL
+ 
+365
+ 
+DAY
+)
+)
+;
+INSERT
+ 
+INTO
+ 
+snippets
+ 
+(
+title
+,
+ 
+content
+,
+ 
+created
+,
+ 
+expires
+)
+ 
+VALUES
+ 
+(
+    
+'
+First autumn morning
+'
+,
+    
+'
+First autumn morning\nthe mirror I stare into\nshows my father
+''
+s face.\n\n– Murakami Kijo
+'
+,
+    
+UTC_TIMESTAMP
+(
+)
+,
+    
+DATE_ADD
+(
+UTC_TIMESTAMP
+(
+)
+,
+ 
+INTERVAL
+ 
+7
+ 
+DAY
+)
+)
+;Creating a new user
+From a security point of view it’s not a good idea to connect to MySQL as the 
+root
+ user from a
+web application. Instead it’s better to create a database user with restricted permissions on
+the database.
+So, while you’re still connected to the MySQL prompt run the following commands to create a
+new 
+web
+ user with 
+SELECT
+ and 
+INSERT
+ privileges only on the database.
+CREATE
+ 
+USER
+ 
+'
+web
+'
+@
+'
+localhost
+'
+;
+GRANT
+ 
+SELECT
+,
+ 
+INSERT
+,
+ 
+UPDATE
+,
+ 
+DELETE
+ 
+ON
+ 
+snippetbox
+.
+*
+ 
+TO
+ 
+'
+web
+'
+@
+'
+localhost
+'
+;
+-- Important: Make sure to swap 'pass' with a password of your own choosing.
+ALTER
+ 
+USER
+ 
+'
+web
+'
+@
+'
+localhost
+'
+ 
+IDENTIFIED
+ 
+BY
+ 
+'
+pass
+'
+;
+Once that’s done type 
+exit
+ to leave the MySQL prompt.
+Test the new user
+You should now be able to connect to the 
+snippetbox
+ database as the 
+web
+ user using the
+following command. When prompted enter the password that you just set.
+$ mysql -D snippetbox -u web -p
+Enter password:
+mysql>
+If the permissions are working correctly you should find that you’re able to perform 
+SELECT
+and 
+INSERT
+ operations on the database correctly, but other commands such as 
+DROP TABLE
+and 
+GRANT
+ will fail.
+mysql> SELECT id, title, expires FROM snippets;
++----+------------------------+---------------------+
+| id | title                  | expires             |
++----+------------------------+---------------------+
+|  1 | An old silent pond     | 2023-04-05 07:20:05 |
+|  2 | Over the wintry forest | 2023-04-05 07:20:05 |
+|  3 | First autumn morning   | 2022-04-12 07:20:05 |
++----+------------------------+---------------------+
+3 rows in set (0.00 sec)
+mysql> DROP TABLE snippets;
+ERROR 1142 (42000): DROP command denied to user 'web'@'localhost' for table 'snippets'Chapter 4.2.
+Installing a database driver
+To use MySQL from our Go web application we need to install a 
+database driver
+. This
+essentially acts as a middleman, translating commands between Go and the MySQL database
+itself.
+You can find a comprehensive 
+list of available drivers
+ on the Go wiki, but for our application
+we’ll use the popular 
+go-sql-driver/mysql
+ driver.
+To download it, go to your project directory and run the 
+go get
+ command like so:
+$ cd $HOME/code/snippetbox
+$ go get github.com/go-sql-driver/mysql@v1
+go: downloading github.com/go-sql-driver/mysql v1.7.0
+Notice here that we’re postfixing the package path with 
+@v1
+ to indicate that we want to
+download the 
+latest available version
+ of the package 
+with
+ the major release number 1.
+At the time of writing this is 
+v1.7.0
+, but the version you download might be 
+v1.7.1
+, 
+v1.8.0
+ or
+similar — and that’s OK. Because the 
+go-sql-driver/mysql
+ package uses 
+semantic versioning
+for its releases any 
+v1.x.x
+ version should be compatible with the rest of the code in this
+book.
+As an aside, if you want to download the latest version, irrespective of version number, you
+can simply omit the 
+@version
+ suffix like so:
+$ go get github.com/go-sql-driver/mysql
+Or if you want to download a specific version of a package, you can use the full version
+number. For example:
+$ go get github.com/go-sql-driver/mysql@v1.0.3Chapter 4.3.
+Modules and reproducible builds
+Now that the MySQL driver is installed, let’s take a look at the 
+go.mod
+ file (which we created
+right at the start of the book). You should see a new 
+require
+ line containing the package path
+and exact version number of the driver which was downloaded:
+File: go.mod
+module snippetbox.alexedwards.net
+go 1.20
+require github.com/go-sql-driver/mysql v1.7.0
+This new line in 
+go.mod
+ essentially tells the Go command which exact version of
+github.com/go-sql-driver/mysql
+ should be used when you run a command like 
+go run
+,
+go test
+ or 
+go build
+ from your project directory. In our case, it tells Go that we always want
+to use version 
+v1.7.0
+.
+This makes it easy to have multiple projects on the same machine where 
+different versions of
+the same package
+ are used. Our project uses 
+v1.7.0
+ of the MySQL driver, but you could have
+another codebase on your computer which uses 
+v1.5.0
+ and that would be A-OK.
+You’ll also see that a new file has been created in the root of your project directory called
+go.sum
+.This 
+go.sum
+ file contains the cryptographic checksums representing the content of the
+required packages. If you open it up you should see something like this:
+File: go.sum
+github.com/go-sql-driver/mysql v1.7.0 h1:ueSltNNllEqE3qcWBTD0iQd3IpL/6U+mJxLkazJ7YPc=
+github.com/go-sql-driver/mysql v1.7.0/go.mod h1:OXbVy3sEdcQ2Doequ6Z5BW6fXNQTmx+9S1MCJN5yJMI=
+The 
+go.sum
+ file isn’t designed to be human-editable and generally you won’t need to open it.
+But it serves two useful functions:
+If you run the 
+go mod verify
+ command from your terminal, this will verify that the
+checksums of the downloaded packages on your machine match the entries in 
+go.sum
+, so
+you can be confident that they haven’t been altered.
+$ go mod verify
+all modules verified
+If someone else needs to download all the dependencies for the project — which they can
+do by running 
+go mod download
+ — they will get an error if there is any mismatch between
+the packages they are downloading and the checksums in the file.
+So, in summary:You (or someone else in the future) can run 
+go mod download
+ to download the exact
+versions of all the packages that your project needs.
+You can run 
+go mod verify
+ to ensure that nothing in those downloaded packages has
+been changed unexpectedly.
+Whenever you run 
+go run
+, 
+go test
+ or 
+go build
+, the exact package versions listed in
+go.mod
+ will always be used.
+And those things together makes it much easier to reliably create 
+reproducible builds
+ of your
+Go applications.
+Additional information
+Upgrading packages
+Once a package has been downloaded and added to your 
+go.mod
+ file the package and version
+are ‘fixed’. But there are many reasons why you might want to upgrade to use a newer version
+of a package in the future.
+To upgrade to latest available 
+minor or patch release
+ of a package, you can simply run 
+go get
+with the 
+-u
+ flag like so:
+$ go get -u github.com/foo/bar
+Or alternatively, if you want to upgrade to a specific version then you should run the same
+command but with the appropriate 
+@version
+ suffix. For example:
+$ go get -u github.com/foo/bar@v2.0.0
+Removing unused packages
+Sometimes you might 
+go get
+ a package only to realize later that you don’t need it anymore.
+When this happens you’ve got two choices.
+You could either run 
+go get
+ and postfix the package path with 
+@none
+, like so:
+$ go get github.com/foo/bar@noneOr if you’ve removed all references to the package in your code, you could run 
+go mod tidy
+,
+which will automatically remove any unused packages from your 
+go.mod
+ and 
+go.sum
+ files.
+$ go mod tidy -vChapter 4.4.
+Creating a database connection pool
+Now that the MySQL database is all set up and we’ve got a driver installed, the natural next
+step is to connect to the database from our web application.
+To do this we need Go’s 
+sql.Open()
+ function, which you use a bit like this:
+// The sql.Open() function initializes a new sql.DB object, which is essentially a
+// pool of database connections.
+db
+,
+ 
+err
+ 
+:=
+ 
+sql
+.
+Open
+(
+"mysql"
+,
+ 
+"web:pass@/snippetbox?parseTime=true"
+)
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+    
+...
+}
+There are a few things about this code to explain and emphasize:
+The first parameter to 
+sql.Open()
+ is the 
+driver name
+ and the second parameter is the 
+data
+source name
+ (sometimes also called a 
+connection string
+ or 
+DSN
+) which describes how to
+connect to your database.
+The format of the data source name will depend on which database and driver you’re
+using. Typically, you can find information and examples in the documentation for your
+specific driver. For the driver we’re using you can find that documentation 
+here
+.
+The 
+parseTime=true
+ part of the DSN above is a 
+driver-specific
+ parameter which instructs
+our driver to convert SQL 
+TIME
+ and 
+DATE
+ fields to Go 
+time.Time
+ objects.
+The 
+sql.Open()
+ function returns a 
+sql.DB
+ object. This isn’t a database connection — it’s a
+pool of many connections
+. This is an important difference to understand. Go manages the
+connections in this pool as needed, automatically opening and closing connections to the
+database via the driver.
+The connection pool is safe for concurrent access, so you can use it from web application
+handlers safely.
+The connection pool is intended to be long-lived. In a web application it’s normal to
+initialize the connection pool in your 
+main()
+ function and then pass the pool to your
+handlers. You shouldn’t call 
+sql.Open()
+ in a short-lived handler itself — it would be a
+waste of memory and network resources.Usage in our web application
+Let’s look at how to use 
+sql.Open()
+ in practice. Open up your 
+main.go
+ file and add the
+following code:
+File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"database/sql"
+ 
+// New import
+    
+"flag"
+    
+"log"
+    
+"net/http"
+    
+"os"
+    
+_
+ 
+"github.com/go-sql-driver/mysql"
+ 
+// New import
+)
+...
+func
+ 
+main
+(
+)
+ 
+{
+    
+addr
+ 
+:=
+ 
+flag
+.
+String
+(
+"addr"
+,
+ 
+":4000"
+,
+ 
+"HTTP network address"
+)
+    
+// Define a new command-line flag for the MySQL DSN string.
+    
+dsn
+ 
+:=
+ 
+flag
+.
+String
+(
+"dsn"
+,
+ 
+"web:pass@/snippetbox?parseTime=true"
+,
+ 
+"MySQL data source name"
+)
+    
+    
+flag
+.
+Parse
+(
+)
+    
+infoLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stdout
+,
+ 
+"INFO\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+)
+    
+errorLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stderr
+,
+ 
+"ERROR\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+|
+log
+.
+Lshortfile
+)
+    
+// To keep the main() function tidy I've put the code for creating a connection
+    
+// pool into the separate openDB() function below. We pass openDB() the DSN
+    
+// from the command-line flag.
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+openDB
+(
+*
+dsn
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// We also defer a call to db.Close(), so that the connection pool is closed
+    
+// before the main() function exits.
+    
+defer
+ 
+db
+.
+Close
+(
+)
+    
+app
+ 
+:=
+ 
+&
+application
+{
+        
+errorLog
+:
+ 
+errorLog
+,
+        
+infoLog
+:
+  
+infoLog
+,
+    
+}
+    
+srv
+ 
+:=
+ 
+&
+http
+.
+Server
+{
+        
+Addr
+:
+     
+*
+addr
+,
+        
+ErrorLog
+:
+ 
+errorLog
+,
+        
+Handler
+:
+  
+app
+.
+routes
+(
+)
+,
+    
+}
+    
+infoLog
+.
+Printf
+(
+"Starting server on %s"
+,
+ 
+*
+addr
+)
+    
+// Because the err variable is now already declared in the code above, we need
+    
+// to use the assignment operator = here, instead of the := 'declare and assign'
+    
+// operator.
+    
+err
+ 
+=
+ 
+srv
+.
+ListenAndServe
+(
+)
+    
+errorLog
+.
+Fatal
+(
+err
+)
+}
+// The openDB() function wraps sql.Open() and returns a sql.DB connection pool// for a given DSN.
+func
+ 
+openDB
+(
+dsn
+ 
+string
+)
+ 
+(
+*
+sql
+.
+DB
+,
+ 
+error
+)
+ 
+{
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+sql
+.
+Open
+(
+"mysql"
+,
+ 
+dsn
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+nil
+,
+ 
+err
+    
+}
+    
+if
+ 
+err
+ 
+=
+ 
+db
+.
+Ping
+(
+)
+;
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+nil
+,
+ 
+err
+    
+}
+    
+return
+ 
+db
+,
+ 
+nil
+}
+There’re a few things about this code which are interesting:
+Notice how the import path for our driver is prefixed with an underscore? This is because
+our 
+main.go
+ file doesn’t actually use anything in the 
+mysql
+ package. So if we try to import
+it normally the Go compiler will raise an error. However, we need the driver’s 
+init()
+function to run so that it can register itself with the 
+database/sql
+ package. The trick to
+getting around this is to alias the package name to the blank identifier. This is standard
+practice for most of Go’s SQL drivers.
+The 
+sql.Open()
+ function doesn’t actually create any connections, all it does is initialize the
+pool for future use. Actual connections to the database are established lazily, as and when
+needed for the first time. So to verify that everything is set up correctly we need to use the
+db.Ping()
+ method to create a connection and check for any errors.
+At this moment in time, the call to 
+defer db.Close()
+ is a bit superfluous. Our application
+is only ever terminated by a signal interrupt (i.e. 
+Ctrl+c
+) or by 
+errorLog.Fatal()
+. In both
+of those cases, the program exits immediately and deferred functions are never run. But
+including 
+db.Close()
+ is a good habit to get into and it could be beneficial later in the
+future if you add a graceful shutdown to your application.
+Testing a connection
+Make sure that the file is saved, and then try running the application. If everything has gone to
+plan, the connection pool should be established and the 
+db.Ping()
+ method should be able to
+create a connection without any errors. All being well, you should see the normal 
+Starting
+server…
+ log message like so:
+$ go run ./cmd/web
+INFO    2022/01/30 21:52:25 Starting server on :4000
+If the application fails to start and you get an 
+"Access denied..."
+ error message like below,
+then the problem probably lies with your DSN. Double-check that the username and
+password are correct, that your database users have the right permissions, and that yourMySQL instance is using standard settings.
+$ go run ./cmd/web
+ERROR   2022/01/30 21:53:01 main.go:32: Error 1045: Access denied for user 'web'@'localhost' (using password: YES)
+exit status 1Chapter 4.5.
+Designing a database model
+In this chapter we’re going to sketch out a database model for our project.
+If you don’t like the term 
+model
+, you might want to think of it as a 
+service layer
+ or 
+data access
+layer
+ instead. Whatever you prefer to call it, the idea is that we will encapsulate the code for
+working with MySQL in a separate package to the rest of our application.
+For now, we’ll create a skeleton database model and have it return a bit of dummy data. It
+won’t do much, but I’d like to explain the pattern before we get into the nitty-gritty of SQL
+queries.
+Sound OK? Then let’s go ahead and create a new 
+internal/models
+ directory containing a
+snippets.go
+ file:
+$ cd $HOME/code/snippetbox
+$ mkdir -p internal/models
+$ touch internal/models/snippets.go
+Remember:
+ The 
+internal
+ directory is being used to hold ancillary non-application-
+specific code, which could potentially be reused. A database model which could be used
+by other applications in the future (like a 
+command line interface
+ application) fits the bill
+here.
+Let’s open the 
+internal/models/snippets.go
+ file and add a new 
+Snippet
+ struct to represent
+the data for an individual snippet, along with a 
+SnippetModel
+ type with methods on it to
+access and manipulate the snippets in our database. Like so:
+File: internal/models/snippets.go
+package
+ 
+models
+import
+ 
+(
+    
+"database/sql"
+    
+"time"
+)
+// Define a Snippet type to hold the data for an individual snippet. Notice how
+// the fields of the struct correspond to the fields in our MySQL snippets
+// table?
+type
+ 
+Snippet
+ 
+struct
+ 
+{
+    
+ID
+      
+int
+    
+Title
+   
+string
+    
+Content
+ 
+string
+    
+Created
+ 
+time
+.
+Time
+    
+Expires
+ 
+time
+.
+Time
+}
+// Define a SnippetModel type which wraps a sql.DB connection pool.
+type
+ 
+SnippetModel
+ 
+struct
+ 
+{
+    
+DB
+ 
+*
+sql
+.
+DB
+}
+// This will insert a new snippet into the database.
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Insert
+(
+title
+ 
+string
+,
+ 
+content
+ 
+string
+,
+ 
+expires
+ 
+int
+)
+ 
+(
+int
+,
+ 
+error
+)
+ 
+{
+    
+return
+ 
+0
+,
+ 
+nil
+}
+// This will return a specific snippet based on its id.
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Get
+(
+id
+ 
+int
+)
+ 
+(
+*
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+return
+ 
+nil
+,
+ 
+nil
+}
+// This will return the 10 most recently created snippets.
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Latest
+(
+)
+ 
+(
+[
+]
+*
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+return
+ 
+nil
+,
+ 
+nil
+}
+Using the SnippetModel
+To use this model in our handlers we need to establish a new 
+SnippetModel
+ struct in our
+main()
+ function and then inject it as a dependency via the 
+application
+ struct — just like wehave with our other dependencies.
+Here’s how:File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"database/sql"
+    
+"flag"
+    
+"log"
+    
+"net/http"
+    
+"os"
+    
+// Import the models package that we just created. You need to prefix this with
+    
+// whatever module path you set up back in chapter 02.01 (Project Setup and Creating
+    
+// a Module) so that the import statement looks like this:
+    
+// "{your-module-path}/internal/models". If you can't remember what module path you 
+    
+// used, you can find it at the top of the go.mod file.
+    
+"snippetbox.alexedwards.net/internal/models"
+ 
+    
+_
+ 
+"github.com/go-sql-driver/mysql"
+)
+// Add a snippets field to the application struct. This will allow us to
+// make the SnippetModel object available to our handlers.
+type
+ 
+application
+ 
+struct
+ 
+{
+    
+errorLog
+ 
+*
+log
+.
+Logger
+    
+infoLog
+  
+*
+log
+.
+Logger
+    
+snippets
+ 
+*
+models
+.
+SnippetModel
+}
+func
+ 
+main
+(
+)
+ 
+{
+    
+addr
+ 
+:=
+ 
+flag
+.
+String
+(
+"addr"
+,
+ 
+":4000"
+,
+ 
+"HTTP network address"
+)
+    
+dsn
+ 
+:=
+ 
+flag
+.
+String
+(
+"dsn"
+,
+ 
+"web:pass@/snippetbox?parseTime=true"
+,
+ 
+"MySQL data source name"
+)
+    
+flag
+.
+Parse
+(
+)
+    
+infoLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stdout
+,
+ 
+"INFO\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+)
+    
+errorLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stderr
+,
+ 
+"ERROR\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+|
+log
+.
+Lshortfile
+)
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+openDB
+(
+*
+dsn
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+defer
+ 
+db
+.
+Close
+(
+)
+    
+// Initialize a models.SnippetModel instance and add it to the application
+    
+// dependencies.
+    
+app
+ 
+:=
+ 
+&
+application
+{
+        
+errorLog
+:
+ 
+errorLog
+,
+        
+infoLog
+:
+  
+infoLog
+,
+        
+snippets
+:
+ 
+&
+models
+.
+SnippetModel
+{
+DB
+:
+ 
+db
+}
+,
+    
+}
+    
+srv
+ 
+:=
+ 
+&
+http
+.
+Server
+{
+        
+Addr
+:
+     
+*
+addr
+,
+        
+ErrorLog
+:
+ 
+errorLog
+,
+        
+Handler
+:
+  
+app
+.
+routes
+(
+)
+,
+    
+}
+    
+infoLog
+.
+Printf
+(
+"Starting server on %s"
+,
+ 
+*
+addr
+)
+    
+err
+ 
+=
+ 
+srv
+.
+ListenAndServe
+(
+)
+    
+errorLog
+.
+Fatal
+(
+err
+)
+}
+...Additional information
+Benefits of this structure
+If you take a step back, you might be able to see a few benefits of setting up our project in this
+way:
+There’s a clean separation of concerns. Our database logic isn’t tied to our handlers which
+means that handler responsibilities are limited to HTTP stuff (i.e. validating requests and
+writing responses). This will make it easier to write tight, focused, unit tests in the future.
+By creating a custom 
+SnippetModel
+ type and implementing methods on it we’ve been able
+to make our model a single, neatly encapsulated object, which we can easily initialize and
+then pass to our handlers as a dependency. Again, this makes for easier to maintain,
+testable code.
+Because the model actions are defined as methods on an object — in our case
+SnippetModel
+ — there’s the opportunity to create an 
+interface
+ and mock it for unit testing
+purposes.
+And finally
+, we have total control over which database is used at runtime, just by using the
+-dsn
+ command-line flag.Chapter 4.6.
+Executing SQL statements
+Now let’s update the 
+SnippetModel.Insert()
+ method — which we’ve just made — so that it
+creates a new record in our 
+snippets
+ table and then returns the integer 
+id
+ for the new
+record.
+To do this we’ll want to execute the following SQL query on our database:
+INSERT
+ 
+INTO
+ 
+snippets
+ 
+(
+title
+,
+ 
+content
+,
+ 
+created
+,
+ 
+expires
+)
+VALUES
+(
+?
+,
+ 
+?
+,
+ 
+UTC_TIMESTAMP
+(
+)
+,
+ 
+DATE_ADD
+(
+UTC_TIMESTAMP
+(
+)
+,
+ 
+INTERVAL
+ 
+?
+ 
+DAY
+)
+)
+Notice how in this query we’re using the 
+?
+ character to indicate 
+placeholder parameters
+ for
+the data that we want to insert in the database? Because the data we’ll be using will
+ultimately be untrusted user input from a form, it’s good practice to use placeholder
+parameters instead of interpolating data in the SQL query.
+Executing the query
+Go provides three different methods for executing database queries:
+DB.Query()
+ is used for 
+SELECT
+ queries which return multiple rows.
+DB.QueryRow()
+ is used for 
+SELECT
+ queries which return a single row.
+DB.Exec()
+ is used for statements which don’t return rows (like 
+INSERT
+ and 
+DELETE
+).
+So, in our case, the most appropriate tool for the job is 
+DB.Exec()
+. Let’s jump in the deep end
+and demonstrate how to use this in our 
+SnippetModel.Insert()
+ method. We’ll discuss the
+details afterwards.
+Open your 
+internal/models/snippets.go
+ file and update it like so:File: internal/models/snippets.go
+package
+ 
+models
+...
+type
+ 
+SnippetModel
+ 
+struct
+ 
+{
+    
+DB
+ 
+*
+sql
+.
+DB
+}
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Insert
+(
+title
+ 
+string
+,
+ 
+content
+ 
+string
+,
+ 
+expires
+ 
+int
+)
+ 
+(
+int
+,
+ 
+error
+)
+ 
+{
+    
+// Write the SQL statement we want to execute. I've split it over two lines
+    
+// for readability (which is why it's surrounded with backquotes instead
+    
+// of normal double quotes).
+    
+stmt
+ 
+:=
+ 
+`
+INSERT INTO snippets (title, content, created, expires)
+    VALUES(?, ?, UTC_TIMESTAMP(), DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? DAY))
+`
+    
+// Use the Exec() method on the embedded connection pool to execute the
+    
+// statement. The first parameter is the SQL statement, followed by the
+    
+// title, content and expiry values for the placeholder parameters. This
+    
+// method returns a sql.Result type, which contains some basic
+    
+// information about what happened when the statement was executed.
+    
+result
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+Exec
+(
+stmt
+,
+ 
+title
+,
+ 
+content
+,
+ 
+expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+0
+,
+ 
+err
+    
+}
+    
+// Use the LastInsertId() method on the result to get the ID of our
+    
+// newly inserted record in the snippets table.
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+result
+.
+LastInsertId
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+0
+,
+ 
+err
+    
+}
+    
+// The ID returned has the type int64, so we convert it to an int type
+    
+// before returning.
+    
+return
+ 
+int
+(
+id
+)
+,
+ 
+nil
+}
+...
+Let’s quickly 
+discuss the 
+sql.Result
+ type returned by 
+DB.Exec()
+. This provides two methods:
+LastInsertId()
+ — which returns the integer (an 
+int64
+) generated by the database in
+response to a command. Typically this will be from an “auto increment” column when
+inserting a new row, which is exactly what’s happening in our case.
+RowsAffected()
+ — which returns the number of rows (as an 
+int64
+) affected by the
+statement.
+Important:
+ Not all drivers and databases support the 
+LastInsertId()
+ and
+RowsAffected()
+ methods. For example, 
+LastInsertId()
+ is 
+not supported
+ by
+PostgreSQL. So if you’re planning on using these methods it’s important to check the
+documentation for your particular driver first.Also, it is perfectly acceptable (and common) to ignore the 
+sql.Result
+ return value if you
+don’t need it. Like so:
+_
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+Exec
+(
+"INSERT INTO ..."
+,
+ 
+...
+)
+Using the model in our handlers
+Let’s bring this back to something more concrete and demonstrate how to call this new code
+from our handlers. Open your 
+cmd/web/handlers.go
+ file and update the 
+snippetCreate
+handler like so:
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+Method
+ 
+!=
+ 
+http
+.
+MethodPost
+ 
+{
+        
+w
+.
+Header
+(
+)
+.
+Set
+(
+"Allow"
+,
+ 
+http
+.
+MethodPost
+)
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusMethodNotAllowed
+)
+        
+return
+    
+}
+    
+// Create some variables holding dummy data. We'll remove these later on
+    
+// during the build.
+    
+title
+ 
+:=
+ 
+"O snail"
+    
+content
+ 
+:=
+ 
+"O snail\nClimb Mount Fuji,\nBut slowly, slowly!\n\n– Kobayashi Issa"
+    
+expires
+ 
+:=
+ 
+7
+    
+// Pass the data to the SnippetModel.Insert() method, receiving the
+    
+// ID of the new record back.
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+title
+,
+ 
+content
+,
+ 
+expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+// Redirect the user to the relevant page for the snippet.
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view?id=%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+Start up the application, then open a second terminal window and use curl to make a
+POST /snippet/create
+ request, like so (note that the 
+-L
+ flag instructs curl to automatically
+follow redirects):$ curl -iL -X POST http://localhost:4000/snippet/create
+HTTP/1.1 303 See Other
+Location: /snippet/view?id=4
+Date: Mon, 31 Jan 2022 16:36:18 GMT
+Content-Length: 0
+HTTP/1.1 200 OK
+Date: Mon, 31 Jan 2022 16:36:18 GMT
+Content-Length: 40
+Content-Type: text/plain; charset=utf-8
+Display a specific snippet with ID 4...
+So this is working pretty nicely. We’ve just sent a HTTP request which triggered our
+snippetCreate
+ handler, which in turn called our 
+SnippetModel.Insert()
+ method. This
+inserted a new record in the database and returned the ID of this new record. Our handler
+then issued a redirect to another URL with the ID as a query string parameter.
+Feel free to take a look in the 
+snippets
+ table of your MySQL database. You should see the
+new record with an ID of 
+4
+ similar to this:
+mysql> SELECT id, title, expires FROM snippets;
++----+------------------------+---------------------+
+| id | title                  | expires             |
++----+------------------------+---------------------+
+|  1 | An old silent pond     | 2023-04-05 07:20:05 |
+|  2 | Over the wintry forest | 2023-04-05 07:20:05 |
+|  3 | First autumn morning   | 2022-04-12 07:20:05 |
+|  4 | O snail                | 2022-04-12 07:32:45 |
++----+------------------------+---------------------+
+4 rows in set (0.00 sec)
+Additional information
+Placeholder parameters
+In the code above we constructed our SQL statement using placeholder parameters, where 
+?
+acted as a placeholder for the data we want to insert.
+The reason for using placeholder parameters to construct our query (rather than string
+interpolation) is to help avoid SQL injection attacks from any untrusted user-provided input.
+Behind the scenes, the 
+DB.Exec()
+ method works in three steps:
+1
+. 
+It creates a new 
+prepared statement
+ on the database using the provided SQL statement.
+The database parses and compiles the statement, then stores it ready for execution.2
+. 
+In a second separate step, 
+Exec()
+ passes the parameter values to the database. The
+database then executes the prepared statement using these parameters. Because the
+parameters are transmitted later, after the statement has been compiled, the database
+treats them as pure data. They can’t change the 
+intent
+ of the statement. So long as the
+original statement is not derived from an untrusted data, injection cannot occur.
+3
+. 
+It then closes (or 
+deallocates
+) the prepared statement on the database.
+The placeholder parameter syntax differs depending on your database. MySQL, SQL Server
+and SQLite use the 
+?
+ notation, but PostgreSQL uses the 
+$N
+ notation. For example, if you were
+using PostgreSQL instead you would write:
+_
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+Exec
+(
+"INSERT INTO ... VALUES ($1, $2, $3)"
+,
+ 
+...
+)Chapter 4.7.
+Single-record SQL queries
+The pattern for 
+SELECT
+ing a single record from the database is a little more complicated. Let’s
+explain how to do it by updating our 
+SnippetModel.Get()
+ method so that it returns a single
+specific snippet based on its ID.
+To do this, we’ll need to run the following SQL query on the database:
+SELECT
+ 
+id
+,
+ 
+title
+,
+ 
+content
+,
+ 
+created
+,
+ 
+expires
+ 
+FROM
+ 
+snippets
+WHERE
+ 
+expires
+ 
+>
+ 
+UTC_TIMESTAMP
+(
+)
+ 
+AND
+ 
+id
+ 
+=
+ 
+?
+Because our 
+snippets
+ table uses the 
+id
+ column as its primary key this query will only ever
+return exactly one database row (or none at all). The query also includes a check on the expiry
+time so that we don’t return any snippets that have expired.
+Notice too that we’re using a placeholder parameter again for the 
+id
+ value?
+Open the 
+internal/models/snippets.go
+ file and add the following code:File: internal/models/snippets.go
+package
+ 
+models
+import
+ 
+(
+    
+"database/sql"
+    
+"errors"
+ 
+// New import
+    
+"time"
+ 
+)
+...
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Get
+(
+id
+ 
+int
+)
+ 
+(
+*
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+// Write the SQL statement we want to execute. Again, I've split it over two
+    
+// lines for readability.
+    
+stmt
+ 
+:=
+ 
+`
+SELECT id, title, content, created, expires FROM snippets
+    WHERE expires > UTC_TIMESTAMP() AND id = ?
+`
+    
+// Use the QueryRow() method on the connection pool to execute our
+    
+// SQL statement, passing in the untrusted id variable as the value for the
+    
+// placeholder parameter. This returns a pointer to a sql.Row object which
+    
+// holds the result from the database.
+    
+row
+ 
+:=
+ 
+m
+.
+DB
+.
+QueryRow
+(
+stmt
+,
+ 
+id
+)
+    
+// Initialize a pointer to a new zeroed Snippet struct.
+    
+s
+ 
+:=
+ 
+&
+Snippet
+{
+}
+    
+// Use row.Scan() to copy the values from each field in sql.Row to the
+    
+// corresponding field in the Snippet struct. Notice that the arguments
+    
+// to row.Scan are *pointers* to the place you want to copy the data into,
+    
+// and the number of arguments must be exactly the same as the number of
+    
+// columns returned by your statement.
+    
+err
+ 
+:=
+ 
+row
+.
+Scan
+(
+&
+s
+.
+ID
+,
+ 
+&
+s
+.
+Title
+,
+ 
+&
+s
+.
+Content
+,
+ 
+&
+s
+.
+Created
+,
+ 
+&
+s
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+// If the query returns no rows, then row.Scan() will return a
+        
+// sql.ErrNoRows error. We use the errors.Is() function check for that
+        
+// error specifically, and return our own ErrNoRecord error
+        
+// instead (we'll create this in a moment).
+        
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+sql
+.
+ErrNoRows
+)
+ 
+{
+            
+return
+ 
+nil
+,
+ 
+ErrNoRecord
+        
+}
+ 
+else
+ 
+{
+            
+return
+ 
+nil
+,
+ 
+err
+        
+}
+    
+}
+    
+// If everything went OK then return the Snippet object.
+    
+return
+ 
+s
+,
+ 
+nil
+}
+...
+Behind the scenes of 
+rows.Scan()
+ your 
+driver will automatically convert the raw output from
+the SQL database to the required native Go types. So long as you’re sensible with the types
+that you’re mapping between SQL and Go, these conversions should generally Just Work.
+Usually:
+CHAR
+, 
+VARCHAR
+ and 
+TEXT
+ map to 
+string
+.
+BOOLEAN
+ maps to 
+bool
+.
+INT
+ maps to 
+int
+; 
+BIGINT
+ maps to 
+int64
+.DECIMAL
+ and 
+NUMERIC
+ map to 
+float
+.
+TIME
+, 
+DATE
+ and 
+TIMESTAMP
+ map to 
+time.Time
+.
+Note:
+ A quirk of our MySQL driver is that we need to use the 
+parseTime=true
+ parameter
+in our DSN to force it to convert 
+TIME
+ and 
+DATE
+ fields to 
+time.Time
+. Otherwise it returns
+these as 
+[]byte
+ objects. This is one of the many 
+driver-specific parameters
+ that it offers.
+If you try to run the application at this point, you should get a compile-time error saying that
+the 
+ErrNoRecord
+ value is undefined:
+$ go run ./cmd/web/
+# snippetbox.alexedwards.net/internal/models
+internal/models/snippets.go:82:25: undefined: ErrNoRecord
+Let’s go ahead and create that now in a new 
+internal/models/errors.go
+ file. Like so:
+$ touch internal/models/errors.go
+File: internal/models/errors.go
+package
+ 
+models
+import
+ 
+(
+    
+"errors"
+)
+var
+ 
+ErrNoRecord
+ 
+=
+ 
+errors
+.
+New
+(
+"models: no matching record found"
+)
+As an aside, you might be wondering why we’re returning the 
+ErrNoRecord
+ error from our
+SnippetModel.Get()
+ method, instead of 
+sql.ErrNoRows
+ directly. The reason is to help
+encapsulate the model completely, so that our application isn’t concerned with the
+underlying datastore or reliant on datastore-specific errors for its behavior.
+Using the model in our handlers
+Alright, let’s put the 
+SnippetModel.Get()
+ method into action.
+Open your 
+cmd/web/handlers.go
+ file and update the 
+snippetView
+ handler so that it returns
+the data for a specific record as a HTTP response:File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"errors"
+ 
+// New import
+    
+"fmt"
+    
+"html/template"
+    
+"net/http"
+    
+"strconv"
+    
+"snippetbox.alexedwards.net/internal/models"
+ 
+// New import
+)
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+URL
+.
+Query
+(
+)
+.
+Get
+(
+"id"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+||
+ 
+id
+ 
+<
+ 
+1
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+// Use the SnippetModel object's Get method to retrieve the data for a
+    
+// specific record based on its ID. If no matching record is found,
+    
+// return a 404 Not Found response.
+    
+snippet
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Get
+(
+id
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+models
+.
+ErrNoRecord
+)
+ 
+{
+            
+app
+.
+notFound
+(
+w
+)
+        
+}
+ 
+else
+ 
+{
+            
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+}
+        
+return
+    
+}
+    
+// Write the snippet data as a plain-text HTTP response body.
+    
+fmt
+.
+Fprintf
+(
+w
+,
+ 
+"%+v"
+,
+ 
+snippet
+)
+}
+...
+Let’s give this a try. Go to your web browser and visit
+http://localhost:4000/snippet/view?id=1
+. You should see a HTTP response which looks
+similar to this:You might also want to try making some requests for other snippets which are expired or
+don’t yet exist (like 
+id=99
+) to verify that they return a 
+404 Not Found
+ response:
+Additional information
+Checking for specific errors
+A couple of times in this chapter we’ve used the 
+errors.Is()
+ function to check whether an
+error matches a specific value. Like this:
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+models
+.
+ErrNoRecord
+)
+ 
+{
+    
+app
+.
+notFound
+(
+w
+)
+}
+ 
+else
+ 
+{
+    
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+}
+Prior to Go 1.13, the idiomatic way to do this was to use the equality operator 
+==
+ to perform
+the check, like so:
+if
+ 
+err
+ 
+==
+ 
+models
+.
+ErrNoRecord
+ 
+{
+    
+app
+.
+notFound
+(
+w
+)
+}
+ 
+else
+ 
+{
+    
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+}
+But, while this code still compiles, it’s now safer and best practice to use the 
+errors.Is()
+function instead.
+This is because Go 1.13 introduced the ability to add additional information to errors by
+wrapping them
+. If an error happens to get wrapped, a entirely new error value is created —
+which in turn means that it’s not possible to check the value of the original underlying error
+using the regular 
+==
+ equality operator.
+In contrast, the 
+errors.Is()
+ function works by 
+unwrapping
+ errors as necessary before
+checking for a match.
+Basically, if you are running Go 1.13 or newer, prefer to use 
+errors.Is()
+. It’s a sensible way
+to future-proof your code and prevent bugs caused by you — or any packages that your code
+imports — deciding to wrap errors in the future.
+There is also another function, 
+errors.As()
+ which you can use to check if a (potentially
+wrapped) error has a specific 
+type
+. We’ll use this later on this book.
+Shorthand single-record queries
+I’ve deliberately made the code in 
+SnippetModel.Get()
+ slightly long-winded to help clarify
+and emphasize what is going on behind-the-scenes of your code.In practice, you can shorten the code slightly by leveraging the fact that errors from
+DB.QueryRow()
+ are deferred until 
+Scan()
+ is called. It makes no functional difference, but if
+you want it’s perfectly OK to re-write the code to look something like this:
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Get
+(
+id
+ 
+int
+)
+ 
+(
+*
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+s
+ 
+:=
+ 
+&
+Snippet
+{
+}
+    
+    
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+QueryRow
+(
+"SELECT ..."
+,
+ 
+id
+)
+.
+Scan
+(
+&
+s
+.
+ID
+,
+ 
+&
+s
+.
+Title
+,
+ 
+&
+s
+.
+Content
+,
+ 
+&
+s
+.
+Created
+,
+ 
+&
+s
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+sql
+.
+ErrNoRows
+)
+ 
+{
+            
+return
+ 
+nil
+,
+ 
+ErrNoRecord
+        
+}
+ 
+else
+ 
+{
+             
+return
+ 
+nil
+,
+ 
+err
+        
+}
+    
+}
+    
+return
+ 
+s
+,
+ 
+nil
+}Chapter 4.8.
+Multiple-record SQL queries
+Finally let’s look at the pattern for executing SQL statements which return multiple rows. 
+I’ll
+demonstrate by updating the 
+SnippetModel.Latest()
+ method to return the 
+most recently
+created ten snippets
+ (so long as they haven’t expired) using the following SQL query:
+SELECT
+ 
+id
+,
+ 
+title
+,
+ 
+content
+,
+ 
+created
+,
+ 
+expires
+ 
+FROM
+ 
+snippets
+WHERE
+ 
+expires
+ 
+>
+ 
+UTC_TIMESTAMP
+(
+)
+ 
+ORDER
+ 
+BY
+ 
+id
+ 
+DESC
+ 
+LIMIT
+ 
+10
+Open up the 
+internal/models/snippets.go
+ file and add the following code:File: internal/models/snippets.go
+package
+ 
+models
+...
+func
+ 
+(
+m
+ 
+*
+SnippetModel
+)
+ 
+Latest
+(
+)
+ 
+(
+[
+]
+*
+Snippet
+,
+ 
+error
+)
+ 
+{
+    
+// Write the SQL statement we want to execute.
+    
+stmt
+ 
+:=
+ 
+`
+SELECT id, title, content, created, expires FROM snippets
+    WHERE expires > UTC_TIMESTAMP() ORDER BY id DESC LIMIT 10
+`
+    
+// Use the Query() method on the connection pool to execute our
+    
+// SQL statement. This returns a sql.Rows resultset containing the result of
+    
+// our query.
+    
+rows
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+Query
+(
+stmt
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+nil
+,
+ 
+err
+    
+}
+    
+// We defer rows.Close() to ensure the sql.Rows resultset is
+    
+// always properly closed before the Latest() method returns. This defer
+    
+// statement should come *after* you check for an error from the Query()
+    
+// method. Otherwise, if Query() returns an error, you'll get a panic
+    
+// trying to close a nil resultset.
+    
+defer
+ 
+rows
+.
+Close
+(
+)
+    
+// Initialize an empty slice to hold the Snippet structs.
+    
+snippets
+ 
+:=
+ 
+[
+]
+*
+Snippet
+{
+}
+    
+// Use rows.Next to iterate through the rows in the resultset. This
+    
+// prepares the first (and then each subsequent) row to be acted on by the
+    
+// rows.Scan() method. If iteration over all the rows completes then the
+    
+// resultset automatically closes itself and frees-up the underlying
+    
+// database connection.
+    
+for
+ 
+rows
+.
+Next
+(
+)
+ 
+{
+        
+// Create a pointer to a new zeroed Snippet struct.
+        
+s
+ 
+:=
+ 
+&
+Snippet
+{
+}
+        
+// Use rows.Scan() to copy the values from each field in the row to the
+        
+// new Snippet object that we created. Again, the arguments to row.Scan()
+        
+// must be pointers to the place you want to copy the data into, and the
+        
+// number of arguments must be exactly the same as the number of
+        
+// columns returned by your statement.
+        
+err
+ 
+=
+ 
+rows
+.
+Scan
+(
+&
+s
+.
+ID
+,
+ 
+&
+s
+.
+Title
+,
+ 
+&
+s
+.
+Content
+,
+ 
+&
+s
+.
+Created
+,
+ 
+&
+s
+.
+Expires
+)
+        
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+            
+return
+ 
+nil
+,
+ 
+err
+        
+}
+        
+// Append it to the slice of snippets.
+        
+snippets
+ 
+=
+ 
+append
+(
+snippets
+,
+ 
+s
+)
+    
+}
+    
+// When the rows.Next() loop has finished we call rows.Err() to retrieve any
+    
+// error that was encountered during the iteration. It's important to
+    
+// call this - don't assume that a successful iteration was completed
+    
+// over the whole resultset.
+    
+if
+ 
+err
+ 
+=
+ 
+rows
+.
+Err
+(
+)
+;
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+nil
+,
+ 
+err
+    
+}
+    
+// If everything went OK then return the Snippets slice.
+    
+return
+ 
+snippets
+,
+ 
+nil
+}Important:
+ Closing a resultset with 
+defer rows.Close()
+ is critical in the code above. As
+long as a resultset is open it will keep the underlying database connection open… so if
+something goes wrong in this method and the resultset isn’t closed, it can rapidly lead
+to all the connections in your pool being used up.
+Using the model in our handlers
+Head back to your 
+cmd/web/handlers.go
+ file and update the 
+home
+ handler to use the
+SnippetModel.Latest()
+ method, dumping the snippet contents to a HTTP response. For now
+just comment out the code relating to template rendering, like so:File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"errors"
+    
+"fmt"
+    
+// "html/template"
+    
+"net/http"
+    
+"strconv"
+    
+"snippetbox.alexedwards.net/internal/models"
+)
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+if
+ 
+r
+.
+URL
+.
+Path
+ 
+!=
+ 
+"/"
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+snippets
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Latest
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+for
+ 
+_
+,
+ 
+snippet
+ 
+:=
+ 
+range
+ 
+snippets
+ 
+{
+        
+fmt
+.
+Fprintf
+(
+w
+,
+ 
+"%+v\n"
+,
+ 
+snippet
+)
+    
+}
+    
+// files := []string{
+    
+//     "./ui/html/base.tmpl",
+    
+//     "./ui/html/partials/nav.tmpl",
+    
+//     "./ui/html/pages/home.tmpl",
+    
+// }
+    
+// ts, err := template.ParseFiles(files...)
+    
+// if err != nil {
+    
+//     app.serverError(w, err)
+    
+//     return
+    
+// }
+    
+// err = ts.ExecuteTemplate(w, "base", nil)
+    
+// if err != nil {
+    
+//     app.serverError(w, err)
+    
+// }
+}
+...
+If you run the application now and visit 
+http://localhost:4000
+ in your browser you should
+get a response similar to this:Chapter 4.9.
+Transactions and other details
+The database/sql package
+As you’re probably starting to realize, the 
+database/sql
+ package essentially provides a
+standard interface between your Go application and the world of SQL databases.
+So long as you use the 
+database/sql
+ package, the Go code you write will generally be
+portable and will work with any kind of SQL database — whether it’s MySQL, PostgreSQL,
+SQLite or something else. This means that your application isn’t so tightly coupled to the
+database that you’re currently using, and the theory is that you can swap databases in the
+future without re-writing all of your code (driver-specific quirks and SQL implementations
+aside).
+It’s important to note that while 
+database/sql
+ generally does a good job of providing a
+standard interface for working with SQL databases, there 
+are
+ some idiosyncrasies in the way
+that different drivers and databases operate. It’s always a good idea to read over the
+documentation for a new driver to understand any quirks and edge cases before you begin
+using it.
+Verbosity
+If you’re coming from Ruby, Python or PHP, the code for querying SQL databases may feel a
+bit verbose, especially if you’re used to dealing with an abstraction layer or ORM.
+But the upside of the verbosity is that our code is non-magical; we can understand and
+control exactly what is going on. And with a bit of time, you’ll find that the patterns for
+making SQL queries become familiar and you can copy-and-paste from previous work.
+If the verbosity really is starting to grate on you, you might want to consider trying the
+jmoiron/sqlx
+ package. It’s well designed and provides some good extensions that make
+working with SQL queries quicker and easier. Another, newer, option you may want to
+consider is the 
+blockloop/scan
+ package.
+Managing null values
+One thing that Go doesn’t do very well is managing 
+NULL
+ values in database records.Let’s pretend that the 
+title
+ column in our 
+snippets
+ table contains a 
+NULL
+ value in a
+particular row. If we queried that row, then 
+rows.Scan()
+ would return an error because it
+can’t convert 
+NULL
+ into a string:
+sql: Scan error on column index 1: unsupported Scan, storing driver.Value type
+&lt;nil&gt; into type *string
+Very roughly, the fix for this is to change the field that you’re are scanning into from a 
+string
+to a 
+sql.NullString
+ type. See 
+this gist
+ for a working example.
+But, as a rule, the easiest thing to do is simply avoid 
+NULL
+ values altogether. Set 
+NOT NULL
+constraints on all your database columns, like we have done in this book, along with sensible
+DEFAULT
+ values as necessary.
+Working with transactions
+It’s important to realize that calls to 
+Exec()
+, 
+Query()
+ and 
+QueryRow()
+ can use 
+any connection
+from the 
+sql.DB
+ pool
+. Even if you have two calls to 
+Exec()
+ immediately next to each other in
+your code, there is no guarantee that they will use the same database connection.
+Sometimes this isn’t acceptable. For instance, if you lock a table with MySQL’s 
+LOCK TABLES
+command you must call 
+UNLOCK TABLES
+ on exactly the same connection to avoid a deadlock.
+To guarantee that the same connection is used you can wrap multiple statements in a
+transaction
+. Here’s the basic pattern:type
+ 
+ExampleModel
+ 
+struct
+ 
+{
+    
+DB
+ 
+*
+sql
+.
+DB
+}
+func
+ 
+(
+m
+ 
+*
+ExampleModel
+)
+ 
+ExampleTransaction
+(
+)
+ 
+error
+ 
+{
+    
+// Calling the Begin() method on the connection pool creates a new sql.Tx
+    
+// object, which represents the in-progress database transaction.
+    
+tx
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+Begin
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+err
+    
+}
+    
+// Defer a call to tx.Rollback() to ensure it is always called before the 
+    
+// function returns. If the transaction succeeds it will be already be 
+    
+// committed by the time tx.Rollback() is called, making tx.Rollback() a 
+    
+// no-op. Otherwise, in the event of an error, tx.Rollback() will rollback 
+    
+// the changes before the function returns.
+    
+defer
+ 
+tx
+.
+Rollback
+(
+)
+    
+// Call Exec() on the transaction, passing in your statement and any
+    
+// parameters. It's important to notice that tx.Exec() is called on the
+    
+// transaction object just created, NOT the connection pool. Although we're
+    
+// using tx.Exec() here you can also use tx.Query() and tx.QueryRow() in
+    
+// exactly the same way.
+    
+_
+,
+ 
+err
+ 
+=
+ 
+tx
+.
+Exec
+(
+"INSERT INTO ..."
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+err
+    
+}
+    
+// Carry out another transaction in exactly the same way.
+    
+_
+,
+ 
+err
+ 
+=
+ 
+tx
+.
+Exec
+(
+"UPDATE ..."
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+err
+    
+}
+    
+// If there are no errors, the statements in the transaction can be committed
+    
+// to the database with the tx.Commit() method. 
+    
+err
+ 
+=
+ 
+tx
+.
+Commit
+(
+)
+    
+return
+ 
+err
+}
+Important:
+ You must 
+always
+ call either 
+Rollback()
+ or 
+Commit()
+ before your function
+returns. If you don’t the connection will stay open and not be returned to the
+connection pool. This can lead to hitting your maximum connection limit/running out of
+resources. The simplest way to avoid this is to use 
+defer tx.Rollback()
+ like we are in
+the example above.
+Transactions are also super-useful if you want to execute multiple SQL statements as a 
+single
+atomic action
+. So long as you use the 
+tx.Rollback()
+ method in the event of any errors, the
+transaction ensures that either:
+All
+ statements are executed successfully; or
+No
+ statements are executed and the database remains unchanged.Prepared statements
+As I mentioned earlier, the 
+Exec()
+, 
+Query()
+ and 
+QueryRow()
+ methods all use prepared
+statements behind the scenes to help prevent SQL injection attacks. They set up a prepared
+statement on the database connection, run it with the parameters provided, and then close
+the prepared statement.
+This might feel rather inefficient because we are creating and recreating the same prepared
+statements every single time.
+In theory, a better approach could be to make use of the 
+DB.Prepare()
+ method to create our
+own prepared statement once, and reuse that instead. This is particularly true for complex
+SQL statements (e.g. those which have multiple JOINS) 
+and
+ are repeated very often (e.g. a
+bulk insert of tens of thousands of records). In these instances, the cost of re-preparing
+statements may have a noticeable effect on run time.
+Here’s the basic pattern for using your own prepared statement in a web application:// We need somewhere to store the prepared statement for the lifetime of our
+// web application. A neat way is to embed in the model alongside the connection
+// pool.
+type
+ 
+ExampleModel
+ 
+struct
+ 
+{
+    
+DB
+         
+*
+sql
+.
+DB
+    
+InsertStmt
+ 
+*
+sql
+.
+Stmt
+}
+// Create a constructor for the model, in which we set up the prepared
+// statement.
+func
+ 
+NewExampleModel
+(
+db
+ 
+*
+sql
+.
+DB
+)
+ 
+(
+*
+ExampleModel
+,
+ 
+error
+)
+ 
+{
+    
+// Use the Prepare method to create a new prepared statement for the
+    
+// current connection pool. This returns a sql.Stmt object which represents
+    
+// the prepared statement.
+    
+insertStmt
+,
+ 
+err
+ 
+:=
+ 
+db
+.
+Prepare
+(
+"INSERT INTO ..."
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+nil
+,
+ 
+err
+    
+}
+    
+// Store it in our ExampleModel object, alongside the connection pool.
+    
+return
+ 
+&
+ExampleModel
+{
+db
+,
+ 
+insertStmt
+}
+,
+ 
+nil
+}
+// Any methods implemented against the ExampleModel object will have access to
+// the prepared statement.
+func
+ 
+(
+m
+ 
+*
+ExampleModel
+)
+ 
+Insert
+(
+args
+...
+)
+ 
+error
+ 
+{
+    
+// Notice how we call Exec directly against the prepared statement, rather
+    
+// than against the connection pool? Prepared statements also support the
+    
+// Query and QueryRow methods.
+    
+_
+,
+ 
+err
+ 
+:=
+ 
+m
+.
+InsertStmt
+.
+Exec
+(
+args
+...
+)
+    
+return
+ 
+err
+}
+// In the web application's main function we will need to initialize a new
+// ExampleModel struct using the constructor function.
+func
+ 
+main
+(
+)
+ 
+{
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+sql
+.
+Open
+(
+...
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+defer
+ 
+db
+.
+Close
+(
+)
+    
+// Create a new ExampleModel object, which includes the prepared statement.
+    
+exampleModel
+,
+ 
+err
+ 
+:=
+ 
+NewExampleModel
+(
+db
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+       
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Defer a call to Close() on the prepared statement to ensure that it is
+    
+// properly closed before our main function terminates.
+    
+defer
+ 
+exampleModel
+.
+InsertStmt
+.
+Close
+(
+)
+}
+There are a few things to be wary of though.
+Prepared statements exist on 
+database connections
+. So, because Go uses a pool of 
+many
+database connections
+, what actually happens is that the first time a prepared statement (i.e.
+the 
+sql.Stmt
+ object) is used it gets created on a particular database connection. The
+sql.Stmt
+ object then remembers which connection in the pool was used. The next time, the
+sql.Stmt
+ object will attempt to use the same database connection again. If that connection isclosed or in use (i.e. not idle) the statement will be re-prepared on another connection.
+Under heavy load, it’s possible that a large amount of prepared statements will be created on
+multiple connections. This can lead to statements being prepared and re-prepared more
+often than you would expect — or even running into server-side limits on the number of
+statements (in MySQL the default maximum is 16,382 prepared statements).
+The code too is more complicated than not using prepared statements.
+So, there is a trade-off to be made between performance and complexity. As with anything,
+you should measure the actual performance benefit of implementing your own prepared
+statements to determine if it’s worth doing. For most cases, I would suggest that using the
+regular 
+Query()
+, 
+QueryRow()
+ and 
+Exec()
+ methods — without preparing statements yourself —
+is a reasonable starting point.

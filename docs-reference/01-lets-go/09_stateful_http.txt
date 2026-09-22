@@ -1,0 +1,2255 @@
+Chapter 9.
+Stateful HTTP
+A nice touch to improve our user experience would be to display a one-time confirmation
+message which the user sees 
+after
+ they’ve added a new snippet. Like so:
+A confirmation message like this should only show up for the user once (immediately after
+creating the snippet) and no other users should ever see the message. If you’ve been
+programming for a while already, you might know this type of functionality as a 
+flash message
+or a 
+toast
+.
+To make this work, we need to start sharing data (or 
+state
+) between HTTP requests for the
+same user. The most common way to do that is to implement a 
+session
+ for the user.
+In this section you’ll learn:
+What 
+session managers
+ are available to help us implement sessions in Go.
+How to 
+use sessions
+ to safely and securely share data between requests for a particular
+user.
+How you can 
+customize session behavior
+ (including timeouts and cookie settings) based
+on your application’s needs.Chapter 9.1.
+Choosing a session manager
+There are a lot of 
+security considerations
+ when it comes to working with sessions, and proper
+implementation is not trivial. Unless you really need to roll your own implementation, it’s a
+good idea to use an existing, well-tested, third-party package here.
+Until recently 
+gorilla/sessions
+ was a very popular option for this. Unfortunately it’s no
+longer maintained and is in archive mode on GitHub, meaning that any bugs in the package —
+including security bugs — will not be fixed.
+So for most applications I now recommend using 
+alexedwards/scs
+. It has a fairly simple API,
+supports automatic loading and saving of session data via middleware, and lets you store
+session data server-side in variety of databases (including MySQL, PostgreSQL and Redis).
+For this project we’ve already got a MySQL database set up, so we’ll opt to use
+alexedwards/scs
+ and store the session data in MySQL.
+If you’re following along, make sure that you’re in your project directory and install the
+necessary packages like so:
+$ go get github.com/alexedwards/scs/v2@v2
+go: downloading github.com/alexedwards/scs/v2 v2.5.0
+go get: added github.com/alexedwards/scs/v2 v2.5.0
+$ go get github.com/alexedwards/scs/mysqlstore@latest
+go: downloading github.com/alexedwards/scs/mysqlstore v0.0.0-20230217120314-6b1bedc0f08c
+go get: added github.com/alexedwards/scs/mysqlstore v0.0.0-20230217120314-6b1bedc0f08cChapter 9.2.
+Setting up the session manager
+In this chapter I’ll run through the process of setting up and using the 
+alexedwards/scs
+package, but if you’re going to use it in a production application I recommend reading the
+documentation
+ and 
+API reference
+ to familiarize yourself with the full range of features.
+The first thing we need to do is create a 
+sessions
+ table in our MySQL database to hold the
+session data for our users. Start by connecting to MySQL from your terminal window as the
+root
+ user and execute the following SQL statement to setup the 
+sessions
+ table:
+USE
+ 
+snippetbox
+;
+CREATE
+ 
+TABLE
+ 
+sessions
+ 
+(
+    
+token
+ 
+CHAR
+(
+43
+)
+ 
+PRIMARY
+ 
+KEY
+,
+    
+data
+ 
+BLOB
+ 
+NOT
+ 
+NULL
+,
+    
+expiry
+ 
+TIMESTAMP
+(
+6
+)
+ 
+NOT
+ 
+NULL
+)
+;
+CREATE
+ 
+INDEX
+ 
+sessions_expiry_idx
+ 
+ON
+ 
+sessions
+ 
+(
+expiry
+)
+;
+In this table:
+The 
+token
+ field will contain a unique, randomly-generated, identifier for each session.
+The 
+data
+ field will contain the actual session data that you want to share between HTTP
+requests. This is stored as 
+binary data
+ in a 
+BLOB
+ (binary large object) type.
+The 
+expiry
+ field will contain an expiry time for the session. The 
+scs
+ package will
+automatically delete expired sessions from the 
+sessions
+ table so that it doesn’t grow too
+large.
+The next thing we need to do is establish a 
+session manager
+ in our 
+main.go
+ file and make it
+available to our handlers via the 
+application
+ struct. The session manager holds the
+configuration settings for our sessions, and also provides some middleware and helper
+methods to handle the loading and saving of session data.
+Open your 
+main.go
+ file and update it as follows:
+File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"database/sql"
+    
+"flag"    
+"flag"
+    
+"html/template"
+    
+"log"
+    
+"net/http"
+    
+"os"
+    
+"time"
+ 
+// New import
+    
+"snippetbox.alexedwards.net/internal/models"
+    
+"github.com/alexedwards/scs/mysqlstore"
+ 
+// New import
+    
+"github.com/alexedwards/scs/v2"
+         
+// New import
+    
+"github.com/go-playground/form/v4"
+    
+_
+ 
+"github.com/go-sql-driver/mysql"
+)
+// Add a new sessionManager field to the application struct.
+type
+ 
+application
+ 
+struct
+ 
+{
+    
+errorLog
+       
+*
+log
+.
+Logger
+    
+infoLog
+        
+*
+log
+.
+Logger
+    
+snippets
+       
+*
+models
+.
+SnippetModel
+    
+templateCache
+  
+map
+[
+string
+]
+*
+template
+.
+Template
+    
+formDecoder
+    
+*
+form
+.
+Decoder
+    
+sessionManager
+ 
+*
+scs
+.
+SessionManager
+}
+func
+ 
+main
+(
+)
+ 
+{
+    
+addr
+ 
+:=
+ 
+flag
+.
+String
+(
+"addr"
+,
+ 
+":4000"
+,
+ 
+"HTTP network address"
+)
+    
+dsn
+ 
+:=
+ 
+flag
+.
+String
+(
+"dsn"
+,
+ 
+"web:pass@/snippetbox?parseTime=true"
+,
+ 
+"MySQL data source name"
+)
+    
+flag
+.
+Parse
+(
+)
+    
+infoLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stdout
+,
+ 
+"INFO\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+)
+    
+errorLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stderr
+,
+ 
+"ERROR\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+|
+log
+.
+Lshortfile
+)
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+openDB
+(
+*
+dsn
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+defer
+ 
+db
+.
+Close
+(
+)
+    
+templateCache
+,
+ 
+err
+ 
+:=
+ 
+newTemplateCache
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+formDecoder
+ 
+:=
+ 
+form
+.
+NewDecoder
+(
+)
+    
+// Use the scs.New() function to initialize a new session manager. Then we
+    
+// configure it to use our MySQL database as the session store, and set a
+    
+// lifetime of 12 hours (so that sessions automatically expire 12 hours
+    
+// after first being created).
+    
+sessionManager
+ 
+:=
+ 
+scs
+.
+New
+(
+)
+    
+sessionManager
+.
+Store
+ 
+=
+ 
+mysqlstore
+.
+New
+(
+db
+)
+    
+sessionManager
+.
+Lifetime
+ 
+=
+ 
+12
+ 
+*
+ 
+time
+.
+Hour
+    
+// And add the session manager to our application dependencies.
+    
+app
+ 
+:=
+ 
+&
+application
+{
+        
+errorLog
+:
+       
+errorLog
+,
+        
+infoLog
+:
+        
+infoLog
+,
+        
+snippets
+:
+       
+&
+models
+.
+SnippetModel
+{
+DB
+:
+ 
+db
+}
+,
+        
+templateCache
+:
+  
+templateCache
+,
+        
+formDecoder
+:
+    
+formDecoder
+,
+        
+sessionManager
+:
+ 
+sessionManager
+,
+    
+}
+    
+srv
+ 
+:=
+ 
+&
+http
+.
+Server
+{
+        
+Addr
+:
+     
+*
+addr
+,
+        
+ErrorLog
+:
+ 
+errorLog
+,
+        
+Handler
+:
+  
+app
+.
+routes
+(
+)
+,        
+Handler
+:
+  
+app
+.
+routes
+(
+)
+,
+    
+}
+    
+infoLog
+.
+Printf
+(
+"Starting server on %s"
+,
+ 
+*
+addr
+)
+    
+err
+ 
+=
+ 
+srv
+.
+ListenAndServe
+(
+)
+    
+errorLog
+.
+Fatal
+(
+err
+)
+}
+...
+Note:
+ The 
+scs.New()
+ function returns a pointer to a 
+SessionManager
+ struct which holds
+configuration settings for your sessions. In the code above we’ve set the 
+Store
+ and
+Lifetime
+ fields of this struct, but there’s a range of 
+other fields
+ that you can and should
+configure depending on your application’s needs.
+For the sessions to work, we also need to wrap our application routes with the middleware
+provided by the 
+SessionManager.LoadAndSave()
+ method. This middleware automatically
+loads and saves session data with every HTTP request and response.
+It’s important to note that we don’t need this middleware to act on 
+all
+ our application routes.
+Specifically, we don’t need it on the 
+/static/*filepath
+ route, because all this does is serve
+static files and there is no need for any stateful behavior.
+So, because of that, it doesn’t make sense to add the session middleware to our existing
+standard
+ middleware chain.
+Instead, let’s create a new 
+dynamic
+ middleware chain containing the middleware appropriate
+for our dynamic application routes only.
+Open the 
+routes.go
+ file and update it like so:File: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+    
+"github.com/julienschmidt/httprouter"
+    
+"github.com/justinas/alice"
+)
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+    
+router
+.
+NotFound
+ 
+=
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+    
+}
+)
+    
+// Leave the static files route unchanged.
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/static/*filepath"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+// Create a new middleware chain containing the middleware specific to our
+    
+// dynamic application routes. For now, this chain will only contain the
+    
+// LoadAndSave session middleware but we'll add more to it later.
+    
+dynamic
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+sessionManager
+.
+LoadAndSave
+)
+    
+// Update these routes to use the new dynamic middleware chain followed by
+    
+// the appropriate handler function. Note that because the alice ThenFunc()
+    
+// method returns a http.Handler (rather than a http.HandlerFunc) we also
+    
+// need to switch to registering the route using the router.Handler() method.
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+home
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+snippetView
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/create"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+snippetCreate
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/snippet/create"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+snippetCreatePost
+)
+)
+    
+standard
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+recoverPanic
+,
+ 
+app
+.
+logRequest
+,
+ 
+secureHeaders
+)
+    
+return
+ 
+standard
+.
+Then
+(
+router
+)
+}
+If you run the application now you should find that it compiles all OK, and your application
+routes continue to work as normal.
+Additional information
+Without using alice
+If you’re not using the 
+justinas/alice
+ package to help manage your middleware chains,
+then you’d need to use the 
+http.HandlerFunc()
+ adapter to convert your handler functions
+like 
+app.home
+ to a 
+http.Handler
+, and then wrap that with session middleware instead. Like
+this:router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+app
+.
+sessionManager
+.
+LoadAndSave
+(
+http
+.
+HandlerFunc
+(
+app
+.
+home
+)
+)
+)
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+app
+.
+sessionManager
+.
+LoadAndSave
+(
+http
+.
+HandlerFunc
+(
+app
+.
+snippetView
+)
+)
+)
+// ... etcChapter 9.3.
+Working with session data
+In this chapter let’s put the session functionality to work and use it to persist the confirmation
+flash message between HTTP requests that we 
+discussed earlier
+.
+We’ll begin in our 
+cmd/web/handlers.go
+ file and update our 
+snippetCreatePost
+ so that a
+flash message is added to the user’s session data if — and only if — the snippet was created
+successfully. Like so:
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+var
+ 
+form
+ 
+snippetCreateForm
+    
+err
+ 
+:=
+ 
+app
+.
+decodePostForm
+(
+r
+,
+ 
+&
+form
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Title
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+MaxChars
+(
+form
+.
+Title
+,
+ 
+100
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be more than 100 characters long"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Content
+)
+,
+ 
+"content"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+PermittedInt
+(
+form
+.
+Expires
+,
+ 
+1
+,
+ 
+7
+,
+ 
+365
+)
+,
+ 
+"expires"
+,
+ 
+"This field must equal 1, 7 or 365"
+)
+    
+if
+ 
+!
+form
+.
+Valid
+(
+)
+ 
+{
+        
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+        
+data
+.
+Form
+ 
+=
+ 
+form
+        
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusUnprocessableEntity
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+        
+return
+    
+}
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+form
+.
+Title
+,
+ 
+form
+.
+Content
+,
+ 
+form
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+// Use the Put() method to add a string value ("Snippet successfully 
+    
+// created!") and the corresponding key ("flash") to the session data.
+    
+app
+.
+sessionManager
+.
+Put
+(
+r
+.
+Context
+(
+)
+,
+ 
+"flash"
+,
+ 
+"Snippet successfully created!"
+)
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+That’s nice and simple, but there are a couple of things to point out:
+The first parameter that we pass to 
+app.sessionManager.Put()
+ is the 
+current request
+context
+. We’ll talk properly about what the request context is and how to use it later in thebook, but for now you can just think of it as somewhere that the session manager
+temporarily stores information while your handlers are dealing with the request.
+The second parameter (in our case the string 
+"flash"
+) is the 
+key
+ for the specific message
+that we are adding to the session data. We’ll subsequently retrieve the message from the
+session data using this key too.
+If there’s no existing session for the current user (or their session has expired) then a new,
+empty, session for them will automatically be created by the session middleware.
+Next up we want our 
+snippetView
+ handler to retrieve the flash message (if one exists in the
+session for the current user) and pass it to the HTML template for subsequent display.
+Because we want to display the flash message once only, we actually want to retrieve 
+and
+remove
+ the message from the session data. We can do both these operations at the same
+time by using the 
+PopString()
+ method.
+I’ll demonstrate:File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+params
+ 
+:=
+ 
+httprouter
+.
+ParamsFromContext
+(
+r
+.
+Context
+(
+)
+)
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+params
+.
+ByName
+(
+"id"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+||
+ 
+id
+ 
+<
+ 
+1
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+snippet
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Get
+(
+id
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+models
+.
+ErrNoRecord
+)
+ 
+{
+            
+app
+.
+notFound
+(
+w
+)
+        
+}
+ 
+else
+ 
+{
+            
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+}
+        
+return
+    
+}
+    
+// Use the PopString() method to retrieve the value for the "flash" key.
+    
+// PopString() also deletes the key and value from the session data, so it
+    
+// acts like a one-time fetch. If there is no matching key in the session
+    
+// data this will return the empty string.
+    
+flash
+ 
+:=
+ 
+app
+.
+sessionManager
+.
+PopString
+(
+r
+.
+Context
+(
+)
+,
+ 
+"flash"
+)
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+data
+.
+Snippet
+ 
+=
+ 
+snippet
+    
+// Pass the flash message to the template.
+    
+data
+.
+Flash
+ 
+=
+ 
+flash
+ 
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"view.tmpl"
+,
+ 
+data
+)
+}
+...
+Info:
+ If you want to retrieve a value from the session data only (and leave it in there) you
+can use the 
+GetString()
+ method instead. The 
+scs
+ package also provides methods for
+retrieving other common data types, including 
+GetInt()
+, 
+GetBool()
+, 
+GetBytes()
+ and
+GetTime()
+.
+If you try to run the application now, the compiler will (rightly) grumble that the 
+Flash
+ field
+isn’t defined in our 
+templateData
+ struct. Go ahead and add it in like so:File: cmd/web/templates.go
+package
+ 
+main
+import
+ 
+(
+    
+"html/template"
+    
+"path/filepath"
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/models"
+)
+type
+ 
+templateData
+ 
+struct
+ 
+{
+    
+CurrentYear
+ 
+int
+    
+Snippet
+     
+*
+models
+.
+Snippet
+    
+Snippets
+    
+[
+]
+*
+models
+.
+Snippet
+    
+Form
+        
+any
+    
+Flash
+       
+string
+ 
+// Add a Flash field to the templateData struct.
+}
+...
+And now, we can update our 
+base.tmpl
+ file to display the flash message, if one exists.
+File: ui/html/base.tmpl
+{{define "base"}}
+<!doctype html>
+<
+html
+ 
+lang
+=
+'en'
+>
+    
+<
+head
+>
+        
+<
+meta
+ 
+charset
+=
+'utf-8'
+>
+        
+<
+title
+>
+{{template "title" .}} - Snippetbox
+<
+/
+title
+>
+        
+<
+link
+ 
+rel
+=
+'stylesheet'
+ 
+href
+=
+'/static/css/main.css'
+>
+        
+<
+link
+ 
+rel
+=
+'shortcut icon'
+ 
+href
+=
+'/static/img/favicon.ico'
+ 
+type
+=
+'image/x-icon'
+>
+        
+<
+link
+ 
+rel
+=
+'stylesheet'
+ 
+href
+=
+'https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700'
+>
+    
+<
+/
+head
+>
+    
+<
+body
+>
+        
+<
+header
+>
+            
+<
+h1
+>
+<
+a
+ 
+href
+=
+'/'
+>
+Snippetbox
+<
+/
+a
+>
+<
+/
+h1
+>
+        
+<
+/
+header
+>
+        {{template "nav" .}}
+        
+<
+main
+>
+            
+<!--
+ Display the flash message if one exists 
+-->
+            {{with .Flash}}
+                
+<
+div
+ 
+class
+=
+'flash'
+>
+{{.}}
+<
+/
+div
+>
+            {{end}}
+            {{template "main" .}}
+        
+<
+/
+main
+>
+        
+<
+footer
+>
+            Powered by 
+<
+a
+ 
+href
+=
+'https://golang.org/'
+>
+Go
+<
+/
+a
+>
+ in {{.CurrentYear}}
+        
+<
+/
+footer
+>
+        
+<
+script
+ 
+src
+=
+"/static/js/main.js"
+ 
+type
+=
+"text/javascript"
+>
+<
+/
+script
+>
+    
+<
+/
+body
+>
+<
+/
+html
+>
+{{end}}
+Remember, the 
+{{with .Flash}}
+ block will only be executed if the value of 
+.Flash
+ is 
+not the
+empty string
+. So, if there’s no 
+"flash"
+ key in the current user’s session, the result is that the
+chunk of new markup simply won’t be displayed.Once that’s done, save all your files and restart the application. Try adding a new snippet like
+so…
+And after redirection you should see the flash message now being displayed:If you try refreshing the page, you can confirm that the flash message is no longer shown — it
+was a one-off message for the current user immediately after they created the snippet.Auto-displaying flash messages
+A little improvement we can make (which will save us some work later in the project) is to
+automate the display of flash messages, so that any message is automatically included the
+next time 
+any page is rendered
+.
+We can do this by adding any flash message to the template data via the 
+newTemplateData()
+helper method that we made earlier, like so:
+File: cmd/web/helpers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+newTemplateData
+(
+r
+ 
+*
+http
+.
+Request
+)
+ 
+*
+templateData
+ 
+{
+    
+return
+ 
+&
+templateData
+{
+        
+CurrentYear
+:
+ 
+time
+.
+Now
+(
+)
+.
+Year
+(
+)
+,
+        
+// Add the flash message to the template data, if one exists.
+        
+Flash
+:
+       
+app
+.
+sessionManager
+.
+PopString
+(
+r
+.
+Context
+(
+)
+,
+ 
+"flash"
+)
+,
+    
+}
+}
+...Making that change means that we no longer need to check for the flash message within the
+snippetView
+ handler, and the code can be reverted to look like this:
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+params
+ 
+:=
+ 
+httprouter
+.
+ParamsFromContext
+(
+r
+.
+Context
+(
+)
+)
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+params
+.
+ByName
+(
+"id"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+||
+ 
+id
+ 
+<
+ 
+1
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+snippet
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Get
+(
+id
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+models
+.
+ErrNoRecord
+)
+ 
+{
+            
+app
+.
+notFound
+(
+w
+)
+        
+}
+ 
+else
+ 
+{
+            
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+}
+        
+return
+    
+}
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+data
+.
+Snippet
+ 
+=
+ 
+snippet
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"view.tmpl"
+,
+ 
+data
+)
+}
+...
+Feel free to try running the application again and creating another snippet. You should find
+that the flash message functionality still works as expected.
+Additional information
+Behind-the-scenes of session management
+I’d like to take a moment to unpack some of the ‘magic’ behind session management and
+explain how it works behind-the-scenes.
+If you like, open up the developer tools in your web browser and take a look at the cookie
+data for one of the pages. You should see a cookie named 
+session
+ in the request data, similar
+to this:This is the 
+session cookie
+, and it will be sent back to the Snippetbox application with every
+request that your browser makes.
+The session cookie contains the 
+session token
+ — also sometimes known as the 
+session ID
+. The
+session token is a high-entropy random string, which in my case is the value
+y9y1-mXyQUoAM6V5s9lXNjbZ_vXSGkO7jy-KL-di7A4
+ (yours will be different).
+It’s important to emphasize that the session token is just a random string. In itself, it doesn’t
+carry or convey any 
+session data
+ (like the flash message that we set in this chapter).
+Next, you might like to open up a terminal to MySQL and run a 
+SELECT
+ query against the
+sessions
+ table to lookup the session token that you see in your browser. Like so:
+mysql> SELECT * FROM sessions WHERE token = 'y9y1-mXyQUoAM6V5s9lXNjbZ_vXSGkO7jy-KL-di7A4';
++---------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------+
+| token                                       | data                                                                                                                                                                                                                                             | expiry                     |
++---------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------+
+| y9y1-mXyQUoAM6V5s9lXNjbZ_vXSGkO7jy-KL-di7A4 | 0x26FF81030102FF820001020108446561646C696E6501FF8400010656616C75657301FF8600000010FF830501010454696D6501FF8400000027FF85040101176D61705B737472696E675D696E74657266616365207B7D01FF8600010C0110000016FF82010F010000000ED9F4496109B650EBFFFF010000 | 2022-04-22 06:59:45.162943 |
++---------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------+
+1 row in set (0.00 sec)
+This should return one record. The 
+data
+ value here is the thing that 
+actually contains our
+session data
+. Specifically, what we’re looking at is a MySQL 
+BLOB
+ (binary large object)
+containing a 
+gob-encoded
+ representation of the session data.Each and every time we make a change to our session data, this 
+data
+ value will be updated to
+reflect the changes.
+Lastly, the final column in the database is the 
+expiry
+ time, after which the session will no
+longer be considered valid.
+So, what happens in our application is that the 
+LoadAndSave()
+ middleware checks each
+incoming request for a session cookie. If a session cookie is present, it reads the session token
+and retrieves the corresponding session data from the database (while also checking that the
+session hasn’t expired). It then adds the session data to the 
+request context
+ so it can be used
+in your handlers.
+Any changes that you make to the session data in your handlers are updated in the request
+context, and then the 
+LoadAndSave()
+ middleware updates the database with any changes to
+the session data before it returns.

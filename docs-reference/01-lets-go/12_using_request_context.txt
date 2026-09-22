@@ -1,0 +1,1215 @@
+Chapter 12.
+Using request context
+At the moment our logic for authenticating a user consists of simply checking whether a
+"authenticatedUserID"
+ value exists in their session data, like so:
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+isAuthenticated
+(
+r
+ 
+*
+http
+.
+Request
+)
+ 
+bool
+ 
+{
+    
+return
+ 
+app
+.
+sessionManager
+.
+Exists
+(
+r
+.
+Context
+(
+)
+,
+ 
+"authenticatedUserID"
+)
+}
+We could make this check more robust by querying our 
+users
+ database table to make sure
+that the 
+"authenticatedUserID"
+ value is a real, valid, value (i.e we haven’t deleted the user’s
+account since they last logged in).
+But there is a slight problem with doing this additional database check.
+Our 
+isAuthenticated()
+ helper can potentially be called multiple times in each request cycle.
+Currently we use it twice — once in the 
+requireAuthentication()
+ middleware and again in
+the 
+newTemplateData()
+ helper. So, if we query the database from the 
+isAuthenticated()
+helper directly, we would end up making duplicated round-trips to the database during every
+request. And that’s not very efficient.
+A better approach would be to carry out this check in some middleware to determine whether
+the current request is from an authenticated user or not, and then pass that information
+down to all subsequent handlers in the chain.
+So how do we do this? Enter 
+request context
+.
+In this section you’ll learn:
+What request context is
+, how to use it, and when it is appropriate to use it.
+How to 
+use request context in practice
+ to pass information about the current user
+between your handlers.Chapter 12.1.
+How request context works
+Every 
+http.Request
+ that our middleware and handlers process has a 
+context.Context
+ object
+embedded in it, which we can use to store information during the lifetime of the request.
+As I’ve already hinted at, in a web application a common use-case for this is to pass
+information between your pieces of middleware and other handlers.
+In our case, we want to use it to check if a user is authenticated once in some middleware,
+and if they are, then make this information available to all our other middleware and
+handlers.
+Let’s start with some theory and explain the syntax for working with request context. Then, in
+the next chapter, we’ll get a bit more concrete again and demonstrate how to practically use
+it in our application.
+The request context syntax
+The basic code for adding information to a request’s context looks like this:
+// Where r is a *http.Request...
+ctx
+ 
+:=
+ 
+r
+.
+Context
+(
+)
+ctx
+ 
+=
+ 
+context
+.
+WithValue
+(
+ctx
+,
+ 
+"isAuthenticated"
+,
+ 
+true
+)
+r
+ 
+=
+ 
+r
+.
+WithContext
+(
+ctx
+)
+Let’s step through this line-by-line.
+First, we use the 
+r.Context()
+ method to retrieve the 
+existing
+ context from a request and
+assign it to the 
+ctx
+ variable.
+Then we use the 
+context.WithValue()
+ method to create a 
+new copy
+ of the existing
+context, containing the key 
+"isAuthenticated"
+ and a value of 
+true
+.
+Then finally we use the 
+r.WithContext()
+ method to create a 
+copy
+ of the request
+containing our new context.
+Important:
+ Notice that we don’t actually update the context for a request directly. What
+we’re doing is 
+creating a new copy
+ of the 
+http.Request
+ object with our new context in it.
+I should also point out that, for clarity, I made that code snippet a bit more verbose than itneeds to be. It’s more typical to write it like this:
+ctx
+ 
+=
+ 
+context
+.
+WithValue
+(
+r
+.
+Context
+(
+)
+,
+ 
+"isAuthenticated"
+,
+ 
+true
+)
+r
+ 
+=
+ 
+r
+.
+WithContext
+(
+ctx
+)
+So that’s how you add data to a request’s context. But what about retrieving it again?
+The important thing to explain here is that, behind the scenes, request context values are
+stored with the type 
+any
+. And that means that, after retrieving them from the context, you’ll
+need to assert them to their original type before you use them.
+To retrieve a value we need to use the 
+r.Context().Value()
+ method, like so:
+isAuthenticated
+,
+ 
+ok
+ 
+:=
+ 
+r
+.
+Context
+(
+)
+.
+Value
+(
+"isAuthenticated"
+)
+.
+(
+bool
+)
+if
+ 
+!
+ok
+ 
+{
+    
+return
+ 
+errors
+.
+New
+(
+"could not convert value to bool"
+)
+}
+Avoiding key collisions
+In the code samples above, I’ve used the string 
+"isAuthenticated"
+ as the key for storing and
+retrieving the data from a request’s context. But this isn’t recommended because there’s a
+risk that other third-party packages used by your application will also want to store data
+using the key 
+"isAuthenticated"
+ — and that would cause a naming collision.
+To avoid this, it’s good practice to create your own custom type which you can use for your
+context keys. Extending our sample code, it’s much better to do something like this:
+// Declare a custom "contextKey" type for your context keys.
+type
+ 
+contextKey
+ 
+string
+// Create a constant with the type contextKey that we can use.
+const
+ 
+isAuthenticatedContextKey
+ 
+=
+ 
+contextKey
+(
+"isAuthenticated"
+)
+...
+// Set the value in the request context, using our isAuthenticatedContextKey 
+// constant as the key.
+ctx
+ 
+:=
+ 
+r
+.
+Context
+(
+)
+ctx
+ 
+=
+ 
+context
+.
+WithValue
+(
+ctx
+,
+ 
+isAuthenticatedContextKey
+,
+ 
+true
+)
+r
+ 
+=
+ 
+r
+.
+WithContext
+(
+ctx
+)
+...
+// Retrieve the value from the request context using our constant as the key.
+isAuthenticated
+,
+ 
+ok
+ 
+:=
+ 
+r
+.
+Context
+(
+)
+.
+Value
+(
+isAuthenticatedContextKey
+)
+.
+(
+bool
+)
+if
+ 
+!
+ok
+ 
+{
+    
+return
+ 
+errors
+.
+New
+(
+"could not convert value to bool"
+)
+}Chapter 12.2.
+Request context for
+authentication/authorization
+So, with those explanations out of the way, let’s start to use the request context functionality
+in our application.
+We’ll begin by heading back to our 
+internal/models/users.go
+ file and updating the
+UserModel.Exists()
+ method, so that it returns 
+true
+ if a user with a specific ID exists in our
+users
+ table, and 
+false
+ otherwise. Like so:
+File: internal/models/users.go
+package
+ 
+models
+...
+func
+ 
+(
+m
+ 
+*
+UserModel
+)
+ 
+Exists
+(
+id
+ 
+int
+)
+ 
+(
+bool
+,
+ 
+error
+)
+ 
+{
+    
+var
+ 
+exists
+ 
+bool
+    
+stmt
+ 
+:=
+ 
+"SELECT EXISTS(SELECT true FROM users WHERE id = ?)"
+    
+err
+ 
+:=
+ 
+m
+.
+DB
+.
+QueryRow
+(
+stmt
+,
+ 
+id
+)
+.
+Scan
+(
+&
+exists
+)
+    
+return
+ 
+exists
+,
+ 
+err
+}
+Then let’s create a new 
+cmd/web/context.go
+ file. In this file we’ll define a custom 
+contextKey
+type and an 
+isAuthenticatedContextKey
+ variable, so that we have a unique key we can use to
+store and retrieve the authentication status from a request context (without the risk of
+naming collisions).
+$ touch cmd/web/context.go
+File: cmd/web/context.go
+package
+ 
+main
+type
+ 
+contextKey
+ 
+string
+const
+ 
+isAuthenticatedContextKey
+ 
+=
+ 
+contextKey
+(
+"isAuthenticated"
+)
+And now for the exciting part. Let’s create a new 
+authenticate()
+ middleware method which:
+1
+. 
+Retrieves the user’s ID from their session data.2
+. 
+Checks the database to see if the ID corresponds to a valid user using the
+UserModel.Exists()
+ method.
+3
+. 
+Updates the request context to include an 
+isAuthenticatedContextKey
+ key with the value
+true
+.
+Here’s the code:
+File: cmd/web/middleware.go
+package
+ 
+main
+import
+ 
+(
+    
+"context"
+ 
+// New import
+    
+"fmt"
+    
+"net/http"
+    
+"github.com/justinas/nosurf"
+)
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+authenticate
+(
+next
+ 
+http
+.
+Handler
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+return
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+// Retrieve the authenticatedUserID value from the session using the
+        
+// GetInt() method. This will return the zero value for an int (0) if no
+        
+// "authenticatedUserID" value is in the session -- in which case we
+        
+// call the next handler in the chain as normal and return.
+        
+id
+ 
+:=
+ 
+app
+.
+sessionManager
+.
+GetInt
+(
+r
+.
+Context
+(
+)
+,
+ 
+"authenticatedUserID"
+)
+        
+if
+ 
+id
+ 
+==
+ 
+0
+ 
+{
+            
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+            
+return
+        
+}
+        
+// Otherwise, we check to see if a user with that ID exists in our
+        
+// database.
+        
+exists
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+users
+.
+Exists
+(
+id
+)
+        
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+            
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+            
+return
+        
+}
+        
+// If a matching user is found, we know that the request is
+        
+// coming from an authenticated user who exists in our database. We
+        
+// create a new copy of the request (with an isAuthenticatedContextKey
+        
+// value of true in the request context) and assign it to r.
+        
+if
+ 
+exists
+ 
+{
+            
+ctx
+ 
+:=
+ 
+context
+.
+WithValue
+(
+r
+.
+Context
+(
+)
+,
+ 
+isAuthenticatedContextKey
+,
+ 
+true
+)
+            
+r
+ 
+=
+ 
+r
+.
+WithContext
+(
+ctx
+)
+        
+}
+        
+// Call the next handler in the chain.
+        
+next
+.
+ServeHTTP
+(
+w
+,
+ 
+r
+)
+    
+}
+)
+}
+The important thing to emphasize here is the following difference:
+When we 
+don’t
+ have a valid authenticated user, we pass the original and unchanged*http.Request
+ to the next handler in the chain.
+When we 
+do
+ have a valid authenticated user, we create a copy of the request with a
+isAuthenticatedContextKey
+ key and 
+true
+ value stored in the request context. We then
+pass this copy of the 
+*http.Request
+ to the next handler in the chain.
+Alright, let’s update the 
+cmd/web/routes.go
+ file to include the 
+authenticate()
+ middleware in
+our 
+dynamic
+ middleware chain:
+File: cmd/web/routes.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+    
+router
+.
+NotFound
+ 
+=
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+    
+}
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/static/*filepath"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+    
+// Add the authenticate() middleware to the chain.
+    
+dynamic
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+sessionManager
+.
+LoadAndSave
+,
+ 
+noSurf
+,
+ 
+app
+.
+authenticate
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+home
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+snippetView
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/user/signup"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userSignup
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/user/signup"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userSignupPost
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/user/login"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userLogin
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/user/login"
+,
+ 
+dynamic
+.
+ThenFunc
+(
+app
+.
+userLoginPost
+)
+)
+    
+protected
+ 
+:=
+ 
+dynamic
+.
+Append
+(
+app
+.
+requireAuthentication
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/create"
+,
+ 
+protected
+.
+ThenFunc
+(
+app
+.
+snippetCreate
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/snippet/create"
+,
+ 
+protected
+.
+ThenFunc
+(
+app
+.
+snippetCreatePost
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodPost
+,
+ 
+"/user/logout"
+,
+ 
+protected
+.
+ThenFunc
+(
+app
+.
+userLogoutPost
+)
+)
+    
+standard
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+recoverPanic
+,
+ 
+app
+.
+logRequest
+,
+ 
+secureHeaders
+)
+    
+return
+ 
+standard
+.
+Then
+(
+router
+)
+}
+The last thing that we need to do is update our 
+isAuthenticated()
+ helper, so that instead of
+checking the session data it now checks the request context to determine if a user is
+authenticated or not.
+We can do this like so:File: cmd/web/helpers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+isAuthenticated
+(
+r
+ 
+*
+http
+.
+Request
+)
+ 
+bool
+ 
+{
+    
+isAuthenticated
+,
+ 
+ok
+ 
+:=
+ 
+r
+.
+Context
+(
+)
+.
+Value
+(
+isAuthenticatedContextKey
+)
+.
+(
+bool
+)
+    
+if
+ 
+!
+ok
+ 
+{
+        
+return
+ 
+false
+    
+}
+    
+return
+ 
+isAuthenticated
+}
+It’s important to point out here that if there isn’t a value in the request context with the
+isAuthenticatedContextKey
+ key, or the underlying value isn’t a 
+bool
+, then this type assertion
+will fail. In that case we take a ‘safe’ fall back and return false (i.e we assume that the user isn’t
+authenticated).
+If you like, try running the application again. It should compile correctly and if you log in as a
+certain user and browse around the application should work exactly as before.
+Then, if you want, open MySQL and delete the record for the user that you’re logged in as
+from the database. For example:
+mysql> USE snippetbox;
+mysql> DELETE FROM users WHERE email = 'bob@example.com';
+And when you go back to your browser and refresh the page, the application is now smart
+enough to recognize that the user has been deleted, and you’ll find yourself treated as an
+unauthenticated (logged-out) user.
+Additional information
+Misusing request context
+It’s important to emphasize that request context should only be used to store information
+relevant to the lifetime of a specific request. The Go documentation for 
+context.Context
+warns:
+Use context Values only for request-scoped data that transits processes and APIs.
+That means you should not use it to pass dependencies that exist 
+outside of the lifetime of arequest
+ — 
+like loggers, template caches and your database connection pool — to your
+middleware and handlers.
+For reasons of type-safety and clarity of code, it’s almost always better to make these
+dependencies available to your handlers explicitly, by either making your handlers methods
+against an 
+application
+ struct (like we have in this book) or passing them in a closure (like in
+this Gist
+).

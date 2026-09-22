@@ -1,0 +1,4622 @@
+Chapter 8.
+Processing forms
+In this section of the book we’re going to focus on allowing users of our web application to
+create new snippets via a HTML form which 
+looks a bit like this:
+The high-level workflow for processing this form will follow a standard 
+Post-Redirect-Get
+pattern and look like this:
+1
+. 
+The user is shown the blank form when they make a 
+GET
+ request to 
+/snippet/create
+.
+2
+. 
+The user completes the form and it’s submitted to the server via a 
+POST
+ request to
+/snippet/create
+.
+3
+. 
+The form data will be validated by our 
+snippetCreatePost
+ handler. If there are any
+validation failures the form will be re-displayed with the appropriate form fields
+highlighted. If it passes our validation checks, the data for the new snippet will be added
+to the database and then we’ll redirect the user to 
+"/snippet/view/:id"
+.
+As part of this you’ll learn:
+How to 
+parse and access
+ form data sent in a 
+POST
+ request.
+Some techniques for performing common 
+validation checks
+ on the form data.
+A 
+user-friendly pattern
+ for alerting the user to validation failures and re-populating formfields with previously submitted data.
+How to 
+keep your handlers clean
+ by using helpers for form processing and validation.Chapter 8.1.
+Setting up a HTML form
+Let’s begin by making a new 
+ui/html/pages/create.tmpl
+ file to hold the HTML for the form…
+$ touch ui/html/pages/create.tmpl
+… and then add the following markup, using the same pattern that we used earlier in the
+book:
+File: ui/html/pages/create.tmpl
+{{define "title"}}Create a New Snippet{{end}}
+{{define "main"}}
+<
+form
+ 
+action
+=
+'/snippet/create'
+ 
+method
+=
+'POST'
+>
+    
+<
+div
+>
+        
+<
+label
+>
+Title:
+<
+/
+label
+>
+        
+<
+input
+ 
+type
+=
+'text'
+ 
+name
+=
+'title'
+>
+    
+<
+/
+div
+>
+    
+<
+div
+>
+        
+<
+label
+>
+Content:
+<
+/
+label
+>
+        
+<
+textarea
+ 
+name
+=
+'content'
+>
+<
+/
+textarea
+>
+    
+<
+/
+div
+>
+    
+<
+div
+>
+        
+<
+label
+>
+Delete in:
+<
+/
+label
+>
+        
+<
+input
+ 
+type
+=
+'radio'
+ 
+name
+=
+'expires'
+ 
+value
+=
+'365'
+ 
+checked
+>
+ One Year
+        
+<
+input
+ 
+type
+=
+'radio'
+ 
+name
+=
+'expires'
+ 
+value
+=
+'7'
+>
+ One Week
+        
+<
+input
+ 
+type
+=
+'radio'
+ 
+name
+=
+'expires'
+ 
+value
+=
+'1'
+>
+ One Day
+    
+<
+/
+div
+>
+    
+<
+div
+>
+        
+<
+input
+ 
+type
+=
+'submit'
+ 
+value
+=
+'Publish snippet'
+>
+    
+<
+/
+div
+>
+<
+/
+form
+>
+{{end}}
+There’s nothing particularly special about this so far. Our 
+main
+ template contains a standard
+HTML form which sends three form values: 
+title
+, 
+content
+ and 
+expires
+ (the number of days
+until the snippet should expire). The only thing to really point out is the form’s 
+action
+ and
+method
+ attributes — we’ve set these up so that the form will 
+POST
+ the data to the URL
+/snippet/create
+ when it’s submitted.
+Now let’s add a new ‘Create snippet’ link to the navigation bar for our application, so that
+clicking it will take the user to this new form.File: ui/html/partials/nav.tmpl
+{{define "nav"}}
+ 
+<
+nav
+>
+    
+<
+a
+ 
+href
+=
+'/'
+>
+Home
+<
+/
+a
+>
+    
+<!--
+ Add a link to the new form 
+-->
+    
+<
+a
+ 
+href
+=
+'/snippet/create'
+>
+Create snippet
+<
+/
+a
+>
+<
+/
+nav
+>
+{{end}}
+And finally, we need to update the 
+snippetCreateForm
+ handler so that it renders our new
+page like so:
+File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+}
+...
+At this point you can fire up the application and visit
+http://localhost:4000/snippet/create
+ in your browser. You should see a form which looks
+like this:Chapter 8.2.
+Parsing form data
+Thanks to the work we did previously in the 
+advanced routing
+ section, any
+POST /snippets/create
+ requests are already being dispatched to our 
+snippetCreatePost
+handler. We’ll now update this handler to process and use the form data when it’s submitted.
+At a high-level we can break this down into two distinct steps.
+1
+. 
+First, we need to use the 
+r.ParseForm()
+ method to parse the request body. This checks
+that the request body is well-formed, and then stores the form data in the request’s
+r.PostForm
+ map. If there are any errors encountered when parsing the body (like there is
+no body, or it’s too large to process) then it will return an error. The 
+r.ParseForm()
+method is also idempotent; it can safely be called multiple times on the same request
+without any side-effects.
+2
+. 
+We can then get to the form data contained in 
+r.PostForm
+ by using the 
+r.PostForm.Get()
+method. For example, we can retrieve the value of the 
+title
+ field with
+r.PostForm.Get("title")
+. If there is no matching field name in the form this will return
+the empty string 
+""
+, similar to the way that query string parameters worked earlier in the
+book.
+Open your 
+cmd/web/handlers.go
+ file and update it to include the following code:File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// First we call r.ParseForm() which adds any data in POST request bodies
+    
+// to the r.PostForm map. This also works in the same way for PUT and PATCH
+    
+// requests. If there are any errors, we use our app.ClientError() helper to 
+    
+// send a 400 Bad Request response to the user.
+    
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+// Use the r.PostForm.Get() method to retrieve the title and content
+    
+// from the r.PostForm map.
+    
+title
+ 
+:=
+ 
+r
+.
+PostForm
+.
+Get
+(
+"title"
+)
+    
+content
+ 
+:=
+ 
+r
+.
+PostForm
+.
+Get
+(
+"content"
+)
+    
+// The r.PostForm.Get() method always returns the form data as a *string*.
+    
+// However, we're expecting our expires value to be a number, and want to
+    
+// represent it in our Go code as an integer. So we need to manually covert
+    
+// the form data to an integer using strconv.Atoi(), and we send a 400 Bad
+    
+// Request response if the conversion fails.
+    
+expires
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+PostForm
+.
+Get
+(
+"expires"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+title
+,
+ 
+content
+,
+ 
+expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+Alright, let’s give this a try! 
+Restart the application and try filling in the form with the title and
+content of a snippet, a bit like this:And then submit the form. If everything has worked, you should be redirected to a page
+displaying your new snippet like so:Additional information
+The r.Form map
+In our code above, we accessed the form values via the 
+r.PostForm
+ map. But an alternative
+approach is to use the (subtly different) 
+r.Form
+ map.
+The 
+r.PostForm
+ map is populated only for 
+POST
+, 
+PATCH
+ and 
+PUT
+ requests, and contains the
+form data from the request body.
+In contrast, the 
+r.Form
+ map is populated for all requests (irrespective of their HTTP method),
+and contains the form data from any request body 
+and
+ any query string parameters. So, if our
+form was submitted to 
+/snippet/create?foo=bar
+, we could also get the value of the 
+foo
+parameter by calling 
+r.Form.Get("foo")
+. Note that in the event of a conflict, the request
+body value will take precedent over the query string parameter.
+Using the 
+r.Form
+ map can be useful if your application sends data in a HTML form and in the
+URL, or you have an application that is agnostic about how parameters are passed. But in ourcase those things aren’t applicable. We expect our form data to be sent in the request body
+only, so it’s sensible for us to access it via 
+r.PostForm
+.
+The FormValue and PostFormValue methods
+The 
+net/http
+ package also provides the methods 
+r.FormValue()
+ and 
+r.PostFormValue()
+.
+These are essentially shortcut functions that call 
+r.ParseForm()
+ for you, and then fetch the
+appropriate field value from 
+r.Form
+ or 
+r.PostForm
+ respectively.
+I recommend avoiding these shortcuts because they 
+silently ignore any errors
+ returned by
+r.ParseForm()
+. That’s not ideal — it means our application could be encountering errors and
+failing for users, but there’s no feedback mechanism to let them know.
+Multiple-value fields
+Strictly speaking, the 
+r.PostForm.Get()
+ method that we’ve used above only returns the 
+first
+value for a specific form field. This means you can’t use it with form fields which potentially
+send multiple values, such as a group of checkboxes.
+<
+input
+ 
+type
+=
+"checkbox"
+ 
+name
+=
+"items"
+ 
+value
+=
+"foo"
+>
+ Foo
+<
+input
+ 
+type
+=
+"checkbox"
+ 
+name
+=
+"items"
+ 
+value
+=
+"bar"
+>
+ Bar
+<
+input
+ 
+type
+=
+"checkbox"
+ 
+name
+=
+"items"
+ 
+value
+=
+"baz"
+>
+ Baz
+In this case you’ll need to work with the 
+r.PostForm
+ map directly. The underlying type of the
+r.PostForm
+ map is 
+url.Values
+, which in turn has the underlying type 
+map[string][]string
+.
+So, for fields with multiple values you can loop over the underlying map to access them like
+so:
+for
+ 
+i
+,
+ 
+item
+ 
+:=
+ 
+range
+ 
+r
+.
+PostForm
+[
+"items"
+]
+ 
+{
+    
+fmt
+.
+Fprintf
+(
+w
+,
+ 
+"%d: Item %s\n"
+,
+ 
+i
+,
+ 
+item
+)
+}
+Limiting form size
+Unless you’re sending multipart data (i.e. your form has the 
+enctype="multipart/form-data"
+attribute) then 
+POST
+, 
+PUT
+ and 
+PATCH
+ request bodies are limited to 10MB. If this is exceeded
+then 
+r.ParseForm()
+ will return an error.
+If you want to change this limit you can use the 
+http.MaxBytesReader()
+ function like so:// Limit the request body size to 4096 bytes
+r
+.
+Body
+ 
+=
+ 
+http
+.
+MaxBytesReader
+(
+w
+,
+ 
+r
+.
+Body
+,
+ 
+4096
+)
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+    
+http
+.
+Error
+(
+w
+,
+ 
+"Bad Request"
+,
+ 
+http
+.
+StatusBadRequest
+)
+    
+return
+}
+With this code only the first 4096 bytes of the request body will be read during
+r.ParseForm()
+. Trying to read beyond this limit will cause the 
+MaxBytesReader
+ to return an
+error, which will subsequently be surfaced by 
+r.ParseForm()
+.
+Additionally — if the limit is hit — 
+MaxBytesReader
+ sets a flag on 
+http.ResponseWriter
+ which
+instructs the server to close the underlying TCP connection.Chapter 8.3.
+Validating form data
+Right now there’s a glaring problem with our code: we’re not validating the (untrusted) user
+input from the form in any way. We should do this to ensure that the form data is present, of
+the correct type and meets any business rules that we have.
+Specifically for this form we want to:
+Check that the 
+title
+ and 
+content
+ fields are not empty.
+Check that the 
+title
+ field is not more than 100 characters long.
+Check that the 
+expires
+ value exactly matches one of our permitted values (
+1
+, 
+7
+ or 
+365
+days).
+All of these checks are fairly straightforward to implement using some 
+if
+ statements and
+various functions in Go’s 
+strings
+ and 
+unicode/utf8
+ packages.
+Open up your 
+handlers.go
+ file and update the 
+snippetCreatePost
+ handler to include the
+appropriate validation rules like so:
+File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"errors"
+    
+"fmt"
+    
+"net/http"
+    
+"strconv"
+    
+"strings"
+      
+// New import
+    
+"unicode/utf8"
+ 
+// New import
+    
+"snippetbox.alexedwards.net/internal/models"
+    
+"github.com/julienschmidt/httprouter"
+)
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+title
+ 
+:=
+ 
+r
+.
+PostForm
+.
+Get
+(
+"title"
+)
+    
+content
+ 
+:=
+ 
+r
+.
+PostForm
+.
+Get
+(
+"content"
+)
+    
+expires
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+PostForm
+.
+Get
+(
+"expires"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)        
+return
+    
+}
+    
+// Initialize a map to hold any validation errors for the form fields.
+    
+fieldErrors
+ 
+:=
+ 
+make
+(
+map
+[
+string
+]
+string
+)
+    
+// Check that the title value is not blank and is not more than 100
+    
+// characters long. If it fails either of those checks, add a message to the
+    
+// errors map using the field name as the key.
+    
+if
+ 
+strings
+.
+TrimSpace
+(
+title
+)
+ 
+==
+ 
+""
+ 
+{
+        
+fieldErrors
+[
+"title"
+]
+ 
+=
+ 
+"This field cannot be blank"
+    
+}
+ 
+else
+ 
+if
+ 
+utf8
+.
+RuneCountInString
+(
+title
+)
+ 
+>
+ 
+100
+ 
+{
+        
+fieldErrors
+[
+"title"
+]
+ 
+=
+ 
+"This field cannot be more than 100 characters long"
+    
+}
+    
+// Check that the Content value isn't blank.
+    
+if
+ 
+strings
+.
+TrimSpace
+(
+content
+)
+ 
+==
+ 
+""
+ 
+{
+        
+fieldErrors
+[
+"content"
+]
+ 
+=
+ 
+"This field cannot be blank"
+    
+}
+    
+// Check the expires value matches one of the permitted values (1, 7 or
+    
+// 365).
+    
+if
+ 
+expires
+ 
+!=
+ 
+1
+ 
+&&
+ 
+expires
+ 
+!=
+ 
+7
+ 
+&&
+ 
+expires
+ 
+!=
+ 
+365
+ 
+{
+        
+fieldErrors
+[
+"expires"
+]
+ 
+=
+ 
+"This field must equal 1, 7 or 365"
+    
+}
+    
+// If there are any errors, dump them in a plain text HTTP response and
+    
+// return from the handler.
+    
+if
+ 
+len
+(
+fieldErrors
+)
+ 
+>
+ 
+0
+ 
+{
+        
+fmt
+.
+Fprint
+(
+w
+,
+ 
+fieldErrors
+)
+        
+return
+    
+}
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+title
+,
+ 
+content
+,
+ 
+expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+Note:
+ When we check the length of the 
+title
+ field, we’re using the
+utf8.RuneCountInString()
+ function — not Go’s 
+len()
+ function. This is because we want
+to count the number of 
+characters
+ in the title rather than the number of bytes. To
+illustrate the difference, the string 
+"Zoë"
+ has 3 characters but a length of 4 bytes
+because of the umlauted 
+ë
+ character.
+Alright, let’s give this a try! Restart the application and try submitting the form with a too-long
+snippet title and blank content field, a bit like this…And you should see a dump of the appropriate validation failure messages, like so:Tip:
+ You can find a bunch of code patterns for processing and validating different types
+of inputs in 
+this blog post
+.Chapter 8.4.
+Displaying errors and repopulating
+fields
+Now that the 
+snippetCreatePost
+ handler is validating the data, the next stage is to manage
+these validation errors gracefully.
+If there are any validation errors we want to re-display the HTML form, highlighting the fields
+which failed validation and automatically re-populating any previously submitted data (so
+that the user doesn’t need to enter it again).
+To do this, let’s begin by adding a new 
+Form
+ field to our 
+templateData
+ struct:
+File: cmd/web/templates.go
+package
+ 
+main
+import
+ 
+(
+    
+"html/template"
+    
+"path/filepath"
+    
+"time"
+    
+"snippetbox.alexedwards.net/internal/models"
+)
+// Add a Form field with the type "any".
+type
+ 
+templateData
+ 
+struct
+ 
+{
+    
+CurrentYear
+ 
+int
+    
+Snippet
+     
+*
+models
+.
+Snippet
+    
+Snippets
+    
+[
+]
+*
+models
+.
+Snippet
+    
+Form
+        
+any
+}
+...
+We’ll use this 
+Form
+ field to pass the validation errors and previously submitted data back to
+the template when we re-display the form.
+Next let’s head back to our 
+cmd/web/handlers.go
+ file and define a new 
+snippetCreateForm
+struct type to hold the form data and any validation errors, and update our
+snippetCreatePost
+ handler to use this.
+Like so:
+File: cmd/web/handlers.go
+package
+ 
+mainpackage
+ 
+main
+...
+// Define a snippetCreateForm struct to represent the form data and validation
+// errors for the form fields. Note that all the struct fields are deliberately
+// exported (i.e. start with a capital letter). This is because struct fields
+// must be exported in order to be read by the html/template package when
+// rendering the template.
+type
+ 
+snippetCreateForm
+ 
+struct
+ 
+{
+    
+Title
+       
+string
+    
+Content
+     
+string
+    
+Expires
+     
+int
+    
+FieldErrors
+ 
+map
+[
+string
+]
+string
+}
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+// Get the expires value from the form as normal.
+    
+expires
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+PostForm
+.
+Get
+(
+"expires"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+// Create an instance of the snippetCreateForm struct containing the values
+    
+// from the form and an empty map for any validation errors.
+    
+form
+ 
+:=
+ 
+snippetCreateForm
+{
+        
+Title
+:
+       
+r
+.
+PostForm
+.
+Get
+(
+"title"
+)
+,
+        
+Content
+:
+     
+r
+.
+PostForm
+.
+Get
+(
+"content"
+)
+,
+        
+Expires
+:
+     
+expires
+,
+        
+FieldErrors
+:
+ 
+map
+[
+string
+]
+string
+{
+}
+,
+    
+}
+    
+// Update the validation checks so that they operate on the snippetCreateForm
+    
+// instance.
+    
+if
+ 
+strings
+.
+TrimSpace
+(
+form
+.
+Title
+)
+ 
+==
+ 
+""
+ 
+{
+        
+form
+.
+FieldErrors
+[
+"title"
+]
+ 
+=
+ 
+"This field cannot be blank"
+    
+}
+ 
+else
+ 
+if
+ 
+utf8
+.
+RuneCountInString
+(
+form
+.
+Title
+)
+ 
+>
+ 
+100
+ 
+{
+        
+form
+.
+FieldErrors
+[
+"title"
+]
+ 
+=
+ 
+"This field cannot be more than 100 characters long"
+    
+}
+    
+if
+ 
+strings
+.
+TrimSpace
+(
+form
+.
+Content
+)
+ 
+==
+ 
+""
+ 
+{
+        
+form
+.
+FieldErrors
+[
+"content"
+]
+ 
+=
+ 
+"This field cannot be blank"
+    
+}
+    
+if
+ 
+form
+.
+Expires
+ 
+!=
+ 
+1
+ 
+&&
+ 
+form
+.
+Expires
+ 
+!=
+ 
+7
+ 
+&&
+ 
+form
+.
+Expires
+ 
+!=
+ 
+365
+ 
+{
+        
+form
+.
+FieldErrors
+[
+"expires"
+]
+ 
+=
+ 
+"This field must equal 1, 7 or 365"
+    
+}
+    
+// If there are any validation errors re-display the create.tmpl template,
+    
+// passing in the snippetCreateForm instance as dynamic data in the Form 
+    
+// field. Note that we use the HTTP status code 422 Unprocessable Entity 
+    
+// when sending the response to indicate that there was a validation error.
+    
+if
+ 
+len
+(
+form
+.
+FieldErrors
+)
+ 
+>
+ 
+0
+ 
+{
+        
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+        
+data
+.
+Form
+ 
+=
+ 
+form
+        
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusUnprocessableEntity
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+        
+return
+    
+}
+    
+// We also need to update this line to pass the data from the
+    
+// snippetCreateForm instance to our Insert() method.
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+form
+.
+Title
+,
+ 
+form
+.
+Content
+,
+ 
+form
+.
+Expires
+)    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+form
+.
+Title
+,
+ 
+form
+.
+Content
+,
+ 
+form
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+OK, so now when there are any validation errors we are re-displaying the 
+create.tmpl
+template, passing in the previous data and validation errors in a 
+snippetCreateForm
+ struct via
+the template data’s 
+Form
+ field.
+If you like, you should be able to run the application at this point and the code should
+compile without any errors.
+Updating the HTML template
+The next thing that we need to do is update our 
+create.tmpl
+ template to display the
+validation errors and re-populate any previous data.
+Re-populating the form data is straightforward enough — we should be able to render this in
+the templates using tags like 
+{{.Form.Title}}
+ and 
+{{.Form.Content}}
+, in the same way that
+we displayed the snippet data earlier in the book.
+For the validation errors, the underlying type of our 
+FieldErrors
+ field is a
+map[string]string
+, which uses the form field names as keys. For maps, it’s possible to
+access the value for a given key by simply chaining the key name. So, for example, to render a
+validation error for the 
+title
+ field we can use the tag 
+{{.Form.FieldErrors.title}}
+ in our
+template.
+Note:
+ Unlike struct fields, map key names 
+don’t
+ have to be capitalized in order to access
+them from a template.
+With that in mind, let’s update the 
+create.tmpl
+ file to re-populate the data and display the
+error messages for each field, if they exist.File: ui/html/pages/create.tmpl
+{{define "title"}}Create a New Snippet{{end}}
+{{define "main"}}
+<
+form
+ 
+action
+=
+'/snippet/create'
+ 
+method
+=
+'POST'
+>
+    
+<
+div
+>
+        
+<
+label
+>
+Title:
+<
+/
+label
+>
+        
+<!--
+ Use the `with` action to render the value of .Form.FieldErrors.title
+        if it is not empty. 
+-->
+        {{with .Form.FieldErrors.title}}
+            
+<
+label
+ 
+class
+=
+'error'
+>
+{{.}}
+<
+/
+label
+>
+        {{end}}
+        
+<!--
+ Re
+-
+populate the title data by setting the `value` attribute. 
+-->
+        
+<
+input
+ 
+type
+=
+'text'
+ 
+name
+=
+'title'
+ 
+value
+=
+'{{.Form.Title}}'
+>
+    
+<
+/
+div
+>
+    
+<
+div
+>
+        
+<
+label
+>
+Content:
+<
+/
+label
+>
+        
+<!--
+ Likewise render the value of .Form.FieldErrors.content if it is not
+        empty. 
+-->
+        {{with .Form.FieldErrors.content}}
+            
+<
+label
+ 
+class
+=
+'error'
+>
+{{.}}
+<
+/
+label
+>
+        {{end}}
+        
+<!--
+ Re
+-
+populate the content data as the inner HTML of the textarea. 
+-->
+        
+<
+textarea
+ 
+name
+=
+'content'
+>
+{{.Form.Content}}
+<
+/
+textarea
+>
+    
+<
+/
+div
+>
+    
+<
+div
+>
+        
+<
+label
+>
+Delete in:
+<
+/
+label
+>
+        
+<!--
+ And render the value of .Form.FieldErrors.expires if it is not empty. 
+-->
+        {{with .Form.FieldErrors.expires}}
+            
+<
+label
+ 
+class
+=
+'error'
+>
+{{.}}
+<
+/
+label
+>
+        {{end}}
+        
+<!--
+ Here we use the `if` action to check if the value of the re
+-
+populated
+        expires field equals 365. If it does, then we render the `checked`
+        attribute so that the radio input is re
+-
+selected. 
+-->
+        
+<
+input
+ 
+type
+=
+'radio'
+ 
+name
+=
+'expires'
+ 
+value
+=
+'365'
+ 
+{
+{
+if
+ 
+(
+eq
+ 
+.
+Form
+.
+Expires
+ 
+365
+)
+}
+}
+checked
+{
+{
+end
+}
+}
+>
+ One Year
+        
+<!--
+ And we do the same for the other possible values too... 
+-->
+        
+<
+input
+ 
+type
+=
+'radio'
+ 
+name
+=
+'expires'
+ 
+value
+=
+'7'
+ 
+{
+{
+if
+ 
+(
+eq
+ 
+.
+Form
+.
+Expires
+ 
+7
+)
+}
+}
+checked
+{
+{
+end
+}
+}
+>
+ One Week
+        
+<
+input
+ 
+type
+=
+'radio'
+ 
+name
+=
+'expires'
+ 
+value
+=
+'1'
+ 
+{
+{
+if
+ 
+(
+eq
+ 
+.
+Form
+.
+Expires
+ 
+1
+)
+}
+}
+checked
+{
+{
+end
+}
+}
+>
+ One Day
+    
+<
+/
+div
+>
+    
+<
+div
+>
+        
+<
+input
+ 
+type
+=
+'submit'
+ 
+value
+=
+'Publish snippet'
+>
+    
+<
+/
+div
+>
+<
+/
+form
+>
+{{end}}
+Hopefully this markup and our use of Go’s templating actions is generally clear — it’s just
+using techniques that we’ve already 
+seen and discussed
+ earlier in the book.
+There’s one final thing we need to do. If we tried to run the application now, we would get a
+500 Internal Server Error
+ when we first visit the form at
+http://localhost:4000/snippet/create
+. This is because our 
+snippetCreate
+ handler
+currently doesn’t set a value for the 
+templateData.Form
+ field, meaning that when Go tries to
+evaluate a template tag like 
+{{with .Form.FieldErrors.title}}
+ it would result in an error
+because 
+Form
+ is 
+nil
+.
+Let’s fix that by updating our 
+snippetCreate
+ handler so that it initializes a new
+createSnippetForm
+ instance and passes it to the template, like so:File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+// Initialize a new createSnippetForm instance and pass it to the template.
+    
+// Notice how this is also a great opportunity to set any default or
+    
+// 'initial' values for the form --- here we set the initial value for the 
+    
+// snippet expiry to 365 days.
+    
+data
+.
+Form
+ 
+=
+ 
+snippetCreateForm
+{
+        
+Expires
+:
+ 
+365
+,
+    
+}
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+}
+...
+Now that’s done, please restart the application and visit
+http://localhost:4000/snippet/create
+ in your browser. You should find that the page
+renders correctly without any errors.
+The try adding some content and changing the default expiry time, but 
+leave the title field
+blank
+ like so:
+After submission you should now see the form re-displayed, with the correctly re-populated
+snippet content and expiry option, and a “This field cannot be blank” error message
+alongside the title field:
+Before we continue, feel free to spend some time playing around with the form and validation
+rules until you’re confident that everything is working as you expect it to.Chapter 8.5.
+Creating validation helpers
+OK, so we’re now in the position where our application is validating the form data according
+to our business rules and gracefully handling any validation errors. That’s great, but it’s taken
+quite a bit of work to get there.
+And while the approach we’ve taken is fine as a one-off, if your application has 
+many forms
+then you can end up with quite a lot of repetition in your code and validation rules. Not to
+mention, writing code for validating forms isn’t exactly the most exciting way to spend your
+time.
+So to help us with validation throughout the rest of this project, we’ll create our own small
+internal/validator
+ package to abstract some of this behavior and reduce the boilerplate
+code in our handlers. We won’t actually change how the application works for the user at all;
+it’s really just a refactoring of our codebase.
+Adding a validator package
+If you’re coding-along, please go ahead and create the following directory and file on your
+machine:
+$ mkdir internal/validator
+$ touch internal/validator/validator.go
+Then in this new 
+internal/validator/validator.go
+ file add the following code:File: internal/validator/validator.go
+package
+ 
+validator
+import
+ 
+(
+    
+"strings"
+    
+"unicode/utf8"
+)
+// Define a new Validator type which contains a map of validation errors for our
+// form fields.
+type
+ 
+Validator
+ 
+struct
+ 
+{
+    
+FieldErrors
+ 
+map
+[
+string
+]
+string
+}
+// Valid() returns true if the FieldErrors map doesn't contain any entries.
+func
+ 
+(
+v
+ 
+*
+Validator
+)
+ 
+Valid
+(
+)
+ 
+bool
+ 
+{
+    
+return
+ 
+len
+(
+v
+.
+FieldErrors
+)
+ 
+==
+ 
+0
+}
+// AddFieldError() adds an error message to the FieldErrors map (so long as no
+// entry already exists for the given key).
+func
+ 
+(
+v
+ 
+*
+Validator
+)
+ 
+AddFieldError
+(
+key
+,
+ 
+message
+ 
+string
+)
+ 
+{
+    
+// Note: We need to initialize the map first, if it isn't already
+    
+// initialized.
+    
+if
+ 
+v
+.
+FieldErrors
+ 
+==
+ 
+nil
+ 
+{
+        
+v
+.
+FieldErrors
+ 
+=
+ 
+make
+(
+map
+[
+string
+]
+string
+)
+    
+}
+    
+if
+ 
+_
+,
+ 
+exists
+ 
+:=
+ 
+v
+.
+FieldErrors
+[
+key
+]
+;
+ 
+!
+exists
+ 
+{
+        
+v
+.
+FieldErrors
+[
+key
+]
+ 
+=
+ 
+message
+    
+}
+}
+// CheckField() adds an error message to the FieldErrors map only if a
+// validation check is not 'ok'.
+func
+ 
+(
+v
+ 
+*
+Validator
+)
+ 
+CheckField
+(
+ok
+ 
+bool
+,
+ 
+key
+,
+ 
+message
+ 
+string
+)
+ 
+{
+    
+if
+ 
+!
+ok
+ 
+{
+        
+v
+.
+AddFieldError
+(
+key
+,
+ 
+message
+)
+    
+}
+}
+// NotBlank() returns true if a value is not an empty string.
+func
+ 
+NotBlank
+(
+value
+ 
+string
+)
+ 
+bool
+ 
+{
+    
+return
+ 
+strings
+.
+TrimSpace
+(
+value
+)
+ 
+!=
+ 
+""
+}
+// MaxChars() returns true if a value contains no more than n characters.
+func
+ 
+MaxChars
+(
+value
+ 
+string
+,
+ 
+n
+ 
+int
+)
+ 
+bool
+ 
+{
+    
+return
+ 
+utf8
+.
+RuneCountInString
+(
+value
+)
+ 
+<=
+ 
+n
+}
+// PermittedInt() returns true if a value is in a list of permitted integers.
+func
+ 
+PermittedInt
+(
+value
+ 
+int
+,
+ 
+permittedValues
+ 
+...
+int
+)
+ 
+bool
+ 
+{
+    
+for
+ 
+i
+ 
+:=
+ 
+range
+ 
+permittedValues
+ 
+{
+        
+if
+ 
+value
+ 
+==
+ 
+permittedValues
+[
+i
+]
+ 
+{
+            
+return
+ 
+true
+        
+}
+    
+}
+    
+return
+ 
+false
+}
+To summarize this:In the code above we’ve defined a custom 
+Validator
+ type which contains a map of errors.
+The 
+Validator
+ type provides a 
+CheckField()
+ method for conditionally adding errors to the
+map, and a 
+Valid()
+ method which returns whether the errors map is empty or not. We’ve
+also added 
+NotBlank()
+ , 
+MaxChars()
+ and 
+PermittedInt()
+ functions to help us perform some
+specific validation checks.
+Conceptually this 
+Validator
+ type is quite basic, but that’s not a bad thing. As we’ll see over
+the course of this book, it’s surprisingly powerful in practice and gives us a lot of flexibility
+and control over validation checks and how we perform them.
+Using the helpers
+Alright, let’s start putting the 
+Validator
+ type to use!
+We’ll head back to our 
+cmd/web/handlers.go
+ file and update it to 
+embed
+ a 
+Validator
+instance in our 
+snippetCreateForm
+ struct, and then use this to perform the necessary
+validation checks on the form data.
+Tip:
+ If you’re not familiar with the concept of embedding structs in Go, Eli Bendersky
+has written a 
+good introduction
+ on the topic and I recommend quickly reading it before
+you continue.
+Like so:
+File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"errors"
+    
+"fmt"
+    
+"net/http"
+    
+"strconv"
+    
+"snippetbox.alexedwards.net/internal/models"
+    
+"snippetbox.alexedwards.net/internal/validator"
+ 
+// New import
+    
+"github.com/julienschmidt/httprouter"
+)
+...
+// Remove the explicit FieldErrors struct field and instead embed the Validator
+// type. Embedding this means that our snippetCreateForm "inherits" all the
+// fields and methods of our Validator type (including the FieldErrors field).
+type
+ 
+snippetCreateForm
+ 
+struct
+ 
+{
+    
+Title
+               
+string
+ 
+    
+Content
+             
+string
+ 
+    
+Expires
+             
+int
+    
+    
+validator
+.
+Validator    
+validator
+.
+Validator
+}
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+expires
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+r
+.
+PostForm
+.
+Get
+(
+"expires"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+form
+ 
+:=
+ 
+snippetCreateForm
+{
+        
+Title
+:
+   
+r
+.
+PostForm
+.
+Get
+(
+"title"
+)
+,
+        
+Content
+:
+ 
+r
+.
+PostForm
+.
+Get
+(
+"content"
+)
+,
+        
+Expires
+:
+ 
+expires
+,
+        
+// Remove the FieldErrors assignment from here.
+    
+}
+    
+// Because the Validator type is embedded by the snippetCreateForm struct,
+    
+// we can call CheckField() directly on it to execute our validation checks.
+    
+// CheckField() will add the provided key and error message to the
+    
+// FieldErrors map if the check does not evaluate to true. For example, in
+    
+// the first line here we "check that the form.Title field is not blank". In
+    
+// the second, we "check that the form.Title field has a maximum character
+    
+// length of 100" and so on.
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Title
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+MaxChars
+(
+form
+.
+Title
+,
+ 
+100
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be more than 100 characters long"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Content
+)
+,
+ 
+"content"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+PermittedInt
+(
+form
+.
+Expires
+,
+ 
+1
+,
+ 
+7
+,
+ 
+365
+)
+,
+ 
+"expires"
+,
+ 
+"This field must equal 1, 7 or 365"
+)
+    
+// Use the Valid() method to see if any of the checks failed. If they did,
+    
+// then re-render the template passing in the form in the same way as
+    
+// before.
+    
+if
+ 
+!
+form
+.
+Valid
+(
+)
+ 
+{
+        
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+        
+data
+.
+Form
+ 
+=
+ 
+form
+        
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusUnprocessableEntity
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+        
+return
+    
+}
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+form
+.
+Title
+,
+ 
+form
+.
+Content
+,
+ 
+form
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+So this is shaping up really nicely.
+We’ve now got an 
+internal/validator
+ package with validation rules and logic that can be
+reused across our application, and it can easily be extended to include additional rules in the
+future. Both form data and errors are neatly encapsulated in a single 
+snippetCreateForm
+struct — which we can easily pass to our templates — and the API for displaying error
+messages and re-populating the data in our templates is simple and consistent.If you like, go ahead and re-run the application now. All being well, you should find that the
+form and validation rules are working correctly and in exactly the same manner as before.Chapter 8.6.
+Automatic form parsing
+Another thing we can do to simplify our handlers is use a third-party package like
+go-playground/form
+ to automatically decode the form data into the 
+createSnippetForm
+struct. Using an automatic decoder is 
+totally
+ optional, but it can help to save you time and
+typing — especially if your application has lots of forms, or you need to process a very large
+form.
+In this chapter we’ll look at how to use the 
+go-playground/form
+ package. If you’re following
+along, please go ahead and install it like so:
+$ go get github.com/go-playground/form/v4@v4
+go get: added github.com/go-playground/form/v4 v4.2.0
+Using the form decoder
+To get this working, the first thing that we need to do is initialize a new 
+*form.Decoder
+instance in our 
+main.go
+ file and make it available to our handlers as a dependency. Like this:
+File: cmd/web/main.go
+package
+ 
+main
+import
+ 
+(
+    
+"database/sql"
+    
+"flag"
+    
+"html/template"
+    
+"log"
+    
+"net/http"
+    
+"os"
+    
+"snippetbox.alexedwards.net/internal/models"
+    
+"github.com/go-playground/form/v4"
+ 
+// New import
+    
+_
+ 
+"github.com/go-sql-driver/mysql"
+)
+// Add a formDecoder field to hold a pointer to a form.Decoder instance.
+type
+ 
+application
+ 
+struct
+ 
+{
+    
+errorLog
+      
+*
+log
+.
+Logger
+    
+infoLog
+       
+*
+log
+.
+Logger
+    
+snippets
+      
+*
+models
+.
+SnippetModel
+    
+templateCache
+ 
+map
+[
+string
+]
+*
+template
+.
+Template
+    
+formDecoder
+   
+*
+form
+.
+Decoder
+}
+func
+ 
+main
+(
+)
+ 
+{
+    
+addr
+ 
+:=
+ 
+flag
+.
+String
+(
+"addr"
+,
+ 
+":4000"
+,
+ 
+"HTTP network address"
+)
+    
+dsn
+ 
+:=
+ 
+flag
+.
+String
+(
+"dsn"
+,
+ 
+"web:pass@/snippetbox?parseTime=true"
+,
+ 
+"MySQL data source name"
+)    
+flag
+.
+Parse
+(
+)
+    
+infoLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stdout
+,
+ 
+"INFO\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+)
+    
+errorLog
+ 
+:=
+ 
+log
+.
+New
+(
+os
+.
+Stderr
+,
+ 
+"ERROR\t"
+,
+ 
+log
+.
+Ldate
+|
+log
+.
+Ltime
+|
+log
+.
+Lshortfile
+)
+    
+db
+,
+ 
+err
+ 
+:=
+ 
+openDB
+(
+*
+dsn
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+defer
+ 
+db
+.
+Close
+(
+)
+    
+templateCache
+,
+ 
+err
+ 
+:=
+ 
+newTemplateCache
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+errorLog
+.
+Fatal
+(
+err
+)
+    
+}
+    
+// Initialize a decoder instance...
+    
+formDecoder
+ 
+:=
+ 
+form
+.
+NewDecoder
+(
+)
+    
+// And add it to the application dependencies.
+    
+app
+ 
+:=
+ 
+&
+application
+{
+        
+errorLog
+:
+      
+errorLog
+,
+        
+infoLog
+:
+       
+infoLog
+,
+        
+snippets
+:
+      
+&
+models
+.
+SnippetModel
+{
+DB
+:
+ 
+db
+}
+,
+        
+templateCache
+:
+ 
+templateCache
+,
+        
+formDecoder
+:
+   
+formDecoder
+,
+    
+}
+    
+srv
+ 
+:=
+ 
+&
+http
+.
+Server
+{
+        
+Addr
+:
+     
+*
+addr
+,
+        
+ErrorLog
+:
+ 
+errorLog
+,
+        
+Handler
+:
+  
+app
+.
+routes
+(
+)
+,
+    
+}
+    
+infoLog
+.
+Printf
+(
+"Starting server on %s"
+,
+ 
+*
+addr
+)
+    
+err
+ 
+=
+ 
+srv
+.
+ListenAndServe
+(
+)
+    
+errorLog
+.
+Fatal
+(
+err
+)
+}
+...
+Next let’s go to our 
+cmd/web/handlers.go
+ file and update it to use this new decoder, like so:File: cmd/web/handlers.go
+package
+ 
+main
+...
+// Update our snippetCreateForm struct to include struct tags which tell the
+// decoder how to map HTML form values into the different struct fields. So, for
+// example, here we're telling the decoder to store the value from the HTML form
+// input with the name "title" in the Title field. The struct tag `form:"-"` 
+// tells the decoder to completely ignore a field during decoding.
+type
+ 
+snippetCreateForm
+ 
+struct
+ 
+{
+    
+Title
+               
+string
+ 
+`
+form:"title"
+`
+    
+Content
+             
+string
+ 
+`
+form:"content"
+`
+    
+Expires
+             
+int
+    
+`
+form:"expires"
+`
+    
+validator
+.
+Validator
+ 
+`
+form:"-"
+`
+}
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+// Declare a new empty instance of the snippetCreateForm struct.
+    
+var
+ 
+form
+ 
+snippetCreateForm
+    
+// Call the Decode() method of the form decoder, passing in the current
+    
+// request and *a pointer* to our snippetCreateForm struct. This will
+    
+// essentially fill our struct with the relevant values from the HTML form.
+    
+// If there is a problem, we return a 400 Bad Request response to the client.
+    
+err
+ 
+=
+ 
+app
+.
+formDecoder
+.
+Decode
+(
+&
+form
+,
+ 
+r
+.
+PostForm
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+// Then validate and use the data as normal...
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Title
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+MaxChars
+(
+form
+.
+Title
+,
+ 
+100
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be more than 100 characters long"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Content
+)
+,
+ 
+"content"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+PermittedInt
+(
+form
+.
+Expires
+,
+ 
+1
+,
+ 
+7
+,
+ 
+365
+)
+,
+ 
+"expires"
+,
+ 
+"This field must equal 1, 7 or 365"
+)
+    
+if
+ 
+!
+form
+.
+Valid
+(
+)
+ 
+{
+        
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+        
+data
+.
+Form
+ 
+=
+ 
+form
+        
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusUnprocessableEntity
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+        
+return
+    
+}
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+form
+.
+Title
+,
+ 
+form
+.
+Content
+,
+ 
+form
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+Hopefully you can see the benefit of this pattern. We can use simple struct tags to define a
+mapping between our HTML form and the ‘destination’ struct fields, and unpacking the form
+data to the destination now only requires us to write a few lines of code — irrespective of howlarge the form is.
+Importantly, type conversions are handled automatically too. We can see that in the code
+above, where the 
+expires
+ value is automatically mapped to an 
+int
+ data type.
+So that’s really good. But there is one problem.
+When we call 
+app.formDecoder.Decode()
+ it requires a 
+non-nil pointer
+ as the target decode
+destination. If we try to pass in something that 
+isn’t
+ a non-nil pointer, then 
+Decode()
+ will
+return a 
+form.InvalidDecoderError
+ error.
+If this ever happens, it’s a critical problem with our application code (rather than a client error
+due to bad input). So we need to check for this error specifically and manage it as a special
+case, rather than just returning a 
+400 Bad Request
+ response.
+Creating a decodePostForm helper
+To assist with this, let’s create a new 
+decodePostForm()
+ helper which does three things:
+Calls 
+r.ParseForm()
+ on the current request.
+Calls 
+app.formDecoder.Decode()
+ to unpack the HTML form data to a target destination.
+Checks for a 
+form.InvalidDecoderError
+ error and triggers a panic if we ever see it.
+If you’re following along, please go ahead and add this to your 
+cmd/web/helpers.go
+ file like
+so:File: cmd/web/helpers.go
+package
+ 
+main
+import
+ 
+(
+    
+"bytes"
+    
+"errors"
+    
+"fmt"
+    
+"net/http"
+    
+"runtime/debug"
+    
+"time"
+    
+"github.com/go-playground/form/v4"
+ 
+// New import
+)
+...
+// Create a new decodePostForm() helper method. The second parameter here, dst,
+// is the target destination that we want to decode the form data into.
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+decodePostForm
+(
+r
+ 
+*
+http
+.
+Request
+,
+ 
+dst
+ 
+any
+)
+ 
+error
+ 
+{
+    
+// Call ParseForm() on the request, in the same way that we did in our
+    
+// createSnippetPost handler.
+    
+err
+ 
+:=
+ 
+r
+.
+ParseForm
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+return
+ 
+err
+    
+}
+    
+// Call Decode() on our decoder instance, passing the target destination as
+    
+// the first parameter.
+    
+err
+ 
+=
+ 
+app
+.
+formDecoder
+.
+Decode
+(
+dst
+,
+ 
+r
+.
+PostForm
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+// If we try to use an invalid target destination, the Decode() method
+        
+// will return an error with the type *form.InvalidDecoderError.We use 
+        
+// errors.As() to check for this and raise a panic rather than returning
+        
+// the error.
+        
+var
+ 
+invalidDecoderError
+ 
+*
+form
+.
+InvalidDecoderError
+        
+        
+if
+ 
+errors
+.
+As
+(
+err
+,
+ 
+&
+invalidDecoderError
+)
+ 
+{
+            
+panic
+(
+err
+)
+        
+}
+        
+// For all other errors, we return them as normal.
+        
+return
+ 
+err
+    
+}
+    
+return
+ 
+nil
+}
+And with that done, we can make the final simplification to our 
+createSnippetPost
+ handler.
+Go ahead and update it to use the 
+decodePostForm()
+ helper and remove the 
+r.ParseForm()
+call, so that the code looks like this:File: cmd/web/handlers.go
+package
+ 
+main
+...
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+var
+ 
+form
+ 
+snippetCreateForm
+    
+err
+ 
+:=
+ 
+app
+.
+decodePostForm
+(
+r
+,
+ 
+&
+form
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+clientError
+(
+w
+,
+ 
+http
+.
+StatusBadRequest
+)
+        
+return
+    
+}
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Title
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+MaxChars
+(
+form
+.
+Title
+,
+ 
+100
+)
+,
+ 
+"title"
+,
+ 
+"This field cannot be more than 100 characters long"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+NotBlank
+(
+form
+.
+Content
+)
+,
+ 
+"content"
+,
+ 
+"This field cannot be blank"
+)
+    
+form
+.
+CheckField
+(
+validator
+.
+PermittedInt
+(
+form
+.
+Expires
+,
+ 
+1
+,
+ 
+7
+,
+ 
+365
+)
+,
+ 
+"expires"
+,
+ 
+"This field must equal 1, 7 or 365"
+)
+    
+if
+ 
+!
+form
+.
+Valid
+(
+)
+ 
+{
+        
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+        
+data
+.
+Form
+ 
+=
+ 
+form
+        
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusUnprocessableEntity
+,
+ 
+"create.tmpl"
+,
+ 
+data
+)
+        
+return
+    
+}
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+form
+.
+Title
+,
+ 
+form
+.
+Content
+,
+ 
+form
+.
+Expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+That’s looking really good.
+Our handler code is now nice and succinct, but still very clear in terms of it’s behavior and
+what it is doing. And we have a general pattern in place for form processing and validation
+that we can easily re-use on other forms in our project — such as the user signup and login
+forms that we’ll build shortly.

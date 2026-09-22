@@ -1,0 +1,1538 @@
+Chapter 7.
+Advanced routing
+In the next section of this book we’re going to add a HTML form to our application so that
+users can create new snippets.
+To make this work smoothly, we’ll first need to update our application routes so that requests
+to 
+/snippet/create
+ are handled differently based on the request method. Specifically:
+For 
+GET /snippet/create
+ requests we want to show the user the HTML form for adding a
+new snippet.
+For 
+POST /snippet/create
+ requests we want to process this form data and then insert a
+new 
+snippet
+ record into our database.
+While we’re at it, there are a couple of other routing-related improvements that we’ll also
+make:
+We’ll restrict all our other routes — which simply return information — to only support 
+GET
+requests.
+We’ll use 
+clean URLs
+ so that any variables are included in the URL path (like
+/snippet/view/123
+) and not appended as a query string (like 
+/snippet/view?id=123
+).
+Essentially, we want to rejig our application routes and handlers so that they end up looking
+like this:
+Method
+Pattern
+Handler
+Action
+GET
+/
+home
+Display the home page
+GET
+/snippet/view/:id
+snippetView
+Display a specific snippet
+GET
+/snippet/create
+snippetCreate
+Display a HTML form for creating a new snippet
+POST
+/snippet/create
+snippetCreatePost
+Create a new snippet
+GET
+/static/
+http.FileServer
+Serve a specific static file
+As I mentioned 
+earlier in the book
+, Go’s servemux doesn’t support method based routing or
+clean URLs with variables in them. There are 
+some tricks
+ you can use to get around this, but
+most people tend to decide that it’s easier to reach for a third-party package to help with
+routing.In this section of the book we will:
+Briefly discuss the features of a few good 
+third-party routers
+.
+Update our application to use one of these routers and demonstrate how to use 
+method-
+based routing and clean URLs
+.Chapter 7.1.
+Choosing a router
+There a literally hundreds of third-party routers for Go to pick from. And (fortunately or
+unfortunately, depending on your perspective) they all work a bit differently. They have
+different APIs, different logic for matching routes, and different behavioral quirks.
+Out of all the third-party routers I’ve tried there are three that I recommend as a starting
+point: 
+julienschmidt/httprouter
+, 
+go-chi/chi
+ and 
+gorilla/mux
+. They all have good
+documentation, decent test coverage, and work well with the standard patterns for handlers
+and middleware that we’ve used in this book.
+All three routers also support method-based routing and clean URLs, but beyond that they
+have slightly different behaviors and features. You should pick between them depending on
+the specific requirements that your project has.
+In summary:
+julienschmidt/httprouter
+ is the most focused, lightweight and fastest of the three
+packages, and is about as close to ‘perfect’ as any third-party router gets in terms of its
+compliance with the HTTP specs. It automatically handles 
+OPTIONS
+ requests and sends
+405
+ responses correctly, and allows you to set custom handlers for 
+404
+ and 
+405
+ responses
+too.
+go-chi/chi
+ is generally similar to 
+httprouter
+ in terms of its features, with the main
+differences being that it also supports regexp route patterns and ‘grouping’ of routes
+which use specific middleware. This route grouping feature is really valuable in larger
+applications where you have lots routes and middleware to manage.
+Two downsides of 
+chi
+ are that it doesn’t automatically handle 
+OPTIONS
+ requests, and it
+doesn’t set an 
+Allow
+ header in 
+405
+ responses.
+gorilla/mux
+ is the most full-featured of the three routers. It supports regexp route
+patterns, and allows you to route requests based on scheme, host and headers. It’s also
+the only one to support custom routing rules and route ‘reversing’ (like you get in Django,
+Rails or Laravel).
+There are two main downsides of 
+gorilla/mux
+. The first downside is that the project is no
+longer actively maintained and is in archive mode on GitHub. That doesn’t necessarily
+mean you should avoid it — the code is stable and battle-hardened, and due to the 
+Go
+compatibility promise
+ it’s likely to remain working without problems for many versions ofGo to come. However any bugs, if they do arise, won’t be fixed in the package.
+The other downside is that it’s comparatively slow and memory hungry — although for a
+database-driven web application like ours the impact over the lifetime of a whole HTTP
+request is likely to be small. Like 
+chi
+, it also doesn’t automatically handle 
+OPTIONS
+requests, and it doesn’t set an 
+Allow
+ header in 
+405
+ responses.
+Note:
+ If you’re interested in a more detailed comparison of these routers I’ve written up
+a guide and flowchart to help you choose between them in 
+this blog post
+.
+In our case, our application is fairly small and we don’t need support for anything beyond
+basic method-based routing and clean URLs. So, for the sake of performance and correctness,
+we’ll opt to use 
+julienschmidt/httprouter
+ in this project.Chapter 7.2.
+Clean URLs and method-based routing
+If you’re following along, please go ahead and install the latest version of 
+httprouter
+ like so:
+$ go get github.com/julienschmidt/httprouter@v1
+go: downloading github.com/julienschmidt/httprouter v1.3.0
+Before we get into the nitty-gritty of actually using 
+httprouter
+, let’s begin with a simple
+example to help demonstrate and explain the syntax:
+router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+app
+.
+snippetView
+)
+In this example:
+We initialize the 
+httprouter
+ router and then use the 
+HandlerFunc()
+ method to add a new
+route which dispatches requests to our 
+snippetView
+ handler function.
+Note:
+ 
+httprouter
+ also provides a 
+Handler()
+ method that you can use to dispatch
+requests to a regular 
+http.Handler
+ (like our static file server).
+The first argument to 
+HandlerFunc()
+ is the HTTP method that the request needs to have
+to be considered a matching request. Note that we’re using the constant 
+http.MethodGet
+here rather than the string 
+"GET"
+.
+The second argument is the pattern that the request URL path must match.
+Patterns can include 
+named parameters
+ in the form 
+:name
+, which act like a wildcard for a
+specific path segment. A request with a URL path like 
+/snippet/view/123
+ or
+/snippet/view/foo
+ would match our example pattern 
+/snippet/view/:id
+, but a request
+for 
+/snippet/bar
+ or 
+/snippet/view/foo/baz
+ wouldn’t.
+Patterns can also include a single 
+catch-all
+ parameter in the form 
+*name
+. These match
+everything
+ and should be used at the end of a pattern, like as 
+/static/*filepath
+.
+The pattern 
+"/"
+ will only match requests where the URL path is exactly 
+"/"
+.
+With all that in mind, let’s head over to our 
+routes.go
+ file and update it so it uses 
+httprouter
+and supports the following routes:Method
+Pattern
+Handler
+Action
+GET
+/
+home
+Display the home page
+GET
+/snippet/view/:id
+snippetView
+Display a specific snippet
+GET
+/snippet/create
+snippetCreate
+Display a HTML form for creating a new snippet
+POST
+/snippet/create
+snippetCreatePost
+Create a new snippet
+GET
+/static/*filepath
+http.FileServer
+Serve a specific static file
+File: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+    
+"github.com/julienschmidt/httprouter"
+ 
+// New import
+    
+"github.com/justinas/alice"
+)
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+// Initialize the router.
+    
+router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+    
+// Update the pattern for the route for the static files.
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/static/*filepath"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+// And then create the routes using the appropriate methods, patterns and 
+    
+// handlers.
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+app
+.
+home
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+app
+.
+snippetView
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreate
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodPost
+,
+ 
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreatePost
+)
+    
+// Create the middleware chain as normal.
+    
+standard
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+recoverPanic
+,
+ 
+app
+.
+logRequest
+,
+ 
+secureHeaders
+)
+    
+// Wrap the router with the middleware and return it as normal.
+    
+return
+ 
+standard
+.
+Then
+(
+router
+)
+}
+Now that’s done, there’s are a few changes we need to make to our 
+handlers.go
+ file. Go
+ahead and update it as follows:
+File: cmd/web/handlers.go
+package
+ 
+main
+import
+ 
+(
+    
+"errors"
+    
+"fmt"
+    
+"net/http"
+    
+"strconv"    
+"snippetbox.alexedwards.net/internal/models"
+    
+"github.com/julienschmidt/httprouter"
+ 
+// New import
+)
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+home
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// Because httprouter matches the "/" path exactly, we can now remove the
+    
+// manual check of r.URL.Path != "/" from this handler.
+    
+snippets
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Latest
+(
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+data
+.
+Snippets
+ 
+=
+ 
+snippets
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"home.tmpl"
+,
+ 
+data
+)
+}
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetView
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// When httprouter is parsing a request, the values of any named parameters
+    
+// will be stored in the request context. We'll talk about request context
+    
+// in detail later in the book, but for now it's enough to know that you can
+    
+// use the ParamsFromContext() function to retrieve a slice containing these
+    
+// parameter names and values like so:
+    
+params
+ 
+:=
+ 
+httprouter
+.
+ParamsFromContext
+(
+r
+.
+Context
+(
+)
+)
+    
+// We can then use the ByName() method to get the value of the "id" named
+    
+// parameter from the slice and validate it as normal.
+    
+id
+,
+ 
+err
+ 
+:=
+ 
+strconv
+.
+Atoi
+(
+params
+.
+ByName
+(
+"id"
+)
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+||
+ 
+id
+ 
+<
+ 
+1
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+        
+return
+    
+}
+    
+snippet
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Get
+(
+id
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+if
+ 
+errors
+.
+Is
+(
+err
+,
+ 
+models
+.
+ErrNoRecord
+)
+ 
+{
+            
+app
+.
+notFound
+(
+w
+)
+        
+}
+ 
+else
+ 
+{
+            
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+}
+        
+return
+    
+}
+    
+data
+ 
+:=
+ 
+app
+.
+newTemplateData
+(
+r
+)
+    
+data
+.
+Snippet
+ 
+=
+ 
+snippet
+    
+app
+.
+render
+(
+w
+,
+ 
+http
+.
+StatusOK
+,
+ 
+"view.tmpl"
+,
+ 
+data
+)
+}
+// Add a new snippetCreate handler, which for now returns a placeholder
+// response. We'll update this shortly to show a HTML form.
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreate
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+w
+.
+Write
+(
+[
+]
+byte
+(
+"Display the form for creating a new snippet..."
+)
+)
+}
+// Rename this handler to snippetCreatePost.
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+snippetCreatePost
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+    
+// Checking if the request method is a POST is now superfluous and can be
+    
+// removed, because this is done automatically by httprouter.
+    
+title
+ 
+:=
+ 
+"O snail"
+    
+content
+ 
+:=
+ 
+"O snail\nClimb Mount Fuji,\nBut slowly, slowly!\n\n– Kobayashi Issa"
+    
+expires
+ 
+:=
+ 
+7    
+id
+,
+ 
+err
+ 
+:=
+ 
+app
+.
+snippets
+.
+Insert
+(
+title
+,
+ 
+content
+,
+ 
+expires
+)
+    
+if
+ 
+err
+ 
+!=
+ 
+nil
+ 
+{
+        
+app
+.
+serverError
+(
+w
+,
+ 
+err
+)
+        
+return
+    
+}
+    
+// Update the redirect path to use the new clean URL format.
+    
+http
+.
+Redirect
+(
+w
+,
+ 
+r
+,
+ 
+fmt
+.
+Sprintf
+(
+"/snippet/view/%d"
+,
+ 
+id
+)
+,
+ 
+http
+.
+StatusSeeOther
+)
+}
+Finally, we need to update the table in our 
+home.tmpl
+ file so that the links in the HTML also
+use the new clean URL style of 
+/snippet/view/:id
+.
+{{define "title"}}Home{{end}}
+{{define "main"}}
+    
+<
+h2
+>
+Latest Snippets
+<
+/
+h2
+>
+    {{if .Snippets}}
+     
+<
+table
+>
+        
+<
+tr
+>
+            
+<
+th
+>
+Title
+<
+/
+th
+>
+            
+<
+th
+>
+Created
+<
+/
+th
+>
+            
+<
+th
+>
+ID
+<
+/
+th
+>
+        
+<
+/
+tr
+>
+        {{range .Snippets}}
+        
+<
+tr
+>
+            
+<!--
+ Use the new clean URL style
+-->
+            
+<
+td
+>
+<
+a
+ 
+href
+=
+'/snippet/view/{{.ID}}'
+>
+{{.Title}}
+<
+/
+a
+>
+<
+/
+td
+>
+            
+<
+td
+>
+{{humanDate .Created}}
+<
+/
+td
+>
+            
+<
+td
+>
+#{{.ID}}
+<
+/
+td
+>
+        
+<
+/
+tr
+>
+        {{end}}
+    
+<
+/
+table
+>
+    {{else}}
+        
+<
+p
+>
+There's nothing to see here... yet!
+<
+/
+p
+>
+    {{end}}
+{{end}}
+With that done, restart the application and you should now be able to 
+view the text snippets
+via the clean URLs. For instance: 
+http://localhost:4000/snippet/view/1
+.You can also see that requests using an unsupported HTTP method are met with a
+405 Method Not Allowed
+ response. For example, try making a 
+POST
+ request to the same URL
+using curl:
+$ curl -i -X POST http://localhost:4000/snippet/view/1
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, OPTIONS
+Content-Security-Policy: default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com
+Content-Type: text/plain; charset=utf-8
+Referrer-Policy: origin-when-cross-origin
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-Xss-Protection: 0
+Date: Sun, 06 Feb 2022 21:06:59 GMT
+Content-Length: 19
+Method Not Allowed
+Custom error handlers
+Before we continue, you might also like to try making the following two requests:$ curl http://localhost:4000/snippet/view/99
+Not Found
+$ curl http://localhost:4000/missing
+404 page not found
+So that’s a bit strange. We can see that both requests result in 
+404
+ responses, but they have
+slightly different response bodies.
+This is happening because the first request ends up calling out to our 
+app.notFound()
+ helper
+when no snippet with ID 
+99
+ can be found, whereas the second response is returned
+automatically by 
+httprouter
+ when no matching route is found.
+Fortunately 
+httprouter
+ makes it easy to set a custom handler for dealing with 
+404
+ responses,
+like so:
+File: cmd/web/routes.go
+package
+ 
+main
+import
+ 
+(
+    
+"net/http"
+    
+"github.com/julienschmidt/httprouter"
+    
+"github.com/justinas/alice"
+)
+func
+ 
+(
+app
+ 
+*
+application
+)
+ 
+routes
+(
+)
+ 
+http
+.
+Handler
+ 
+{
+    
+router
+ 
+:=
+ 
+httprouter
+.
+New
+(
+)
+    
+// Create a handler function which wraps our notFound() helper, and then
+    
+// assign it as the custom handler for 404 Not Found responses. You can also
+    
+// set a custom handler for 405 Method Not Allowed responses by setting
+    
+// router.MethodNotAllowed in the same way too.
+    
+router
+.
+NotFound
+ 
+=
+ 
+http
+.
+HandlerFunc
+(
+func
+(
+w
+ 
+http
+.
+ResponseWriter
+,
+ 
+r
+ 
+*
+http
+.
+Request
+)
+ 
+{
+        
+app
+.
+notFound
+(
+w
+)
+    
+}
+)
+    
+fileServer
+ 
+:=
+ 
+http
+.
+FileServer
+(
+http
+.
+Dir
+(
+"./ui/static/"
+)
+)
+    
+router
+.
+Handler
+(
+http
+.
+MethodGet
+,
+ 
+"/static/*filepath"
+,
+ 
+http
+.
+StripPrefix
+(
+"/static"
+,
+ 
+fileServer
+)
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/"
+,
+ 
+app
+.
+home
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/view/:id"
+,
+ 
+app
+.
+snippetView
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodGet
+,
+ 
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreate
+)
+    
+router
+.
+HandlerFunc
+(
+http
+.
+MethodPost
+,
+ 
+"/snippet/create"
+,
+ 
+app
+.
+snippetCreatePost
+)
+    
+standard
+ 
+:=
+ 
+alice
+.
+New
+(
+app
+.
+recoverPanic
+,
+ 
+app
+.
+logRequest
+,
+ 
+secureHeaders
+)
+    
+return
+ 
+standard
+.
+Then
+(
+router
+)
+}
+If you restart the application and try making the same requests again, you’ll find that the
+responses now match.$ curl http://localhost:4000/snippet/view/99
+Not Found
+$ curl http://localhost:4000/missing
+Not Found
+Additional information
+Conflicting route patterns
+It’s important to be aware that 
+httprouter
+ doesn’t allow 
+conflicting route patterns
+ which
+potentially match the same request. So, for example, you cannot register a route like
+GET /foo/new
+ 
+and
+ another route with a named parameter segment or catch-all parameter
+that conflicts with it — like 
+GET /foo/:name
+ or 
+GET /foo/*name
+.
+In most cases this is a positive thing. Because conflicting routes aren’t allowed, there are no
+routing-priority rules that you need to worry about, and it reduces the risk of bugs and
+unintended behavior in your application.
+But if you do need to support conflicting routes (for example, you might need to replicate the
+endpoints of an existing application exactly for backwards-compatibility), then I would
+recommend using 
+chi
+ or 
+gorilla/mux
+ instead — both of which 
+do
+ permit conflicting routes.
+Customizing httprouter behavior
+The 
+httprouter
+ package provides a few configuration options that you can use to customize
+the behavior of your application further, including enabling 
+trailing slash redirects
+ and
+enabling 
+automatic URL path cleaning
+.
+More information about the available settings can be found 
+here
+.
+Restful routing
+If you’ve got a background in Ruby-on-Rails, Laravel or similar, you might be wondering why
+we aren’t structuring our routes and handlers to be more ‘RESTful’ and look like this:Method
+Pattern
+Handler
+Action
+GET
+/snippets
+snippetIndex
+Display a list of all snippets
+GET
+/snippets/:id
+snippetView
+Display a specific snippet
+GET
+/snippets/new
+snippetNew
+Display a HTML form for creating a new snippet
+POST
+/snippets
+snippetCreate
+Create a new snippet
+…
+…
+…
+…
+There are a couple of reasons.
+The first reason is that the 
+GET /snippets/:id
+ and 
+GET /snippets/new
+ routes 
+conflict
+ with
+each other — a HTTP request to 
+/snippets/new
+ potentially matches both routes (with the 
+id
+value being set to the string 
+"new"
+). As mentioned above, 
+httprouter
+ doesn’t allow
+conflicting route patterns, and it’s generally good practice to avoid them anyway because
+they are a potential source of bugs.
+The second reason is that the HTML form presented on 
+/snippets/new
+ would need to post to
+/snippets
+ when submitted. This means that when we re-render the HTML form to show any
+validation errors, the URL in the user’s browser will also change to 
+/snippets
+. YMMV on
+whether you consider this a problem or not. Most users don’t look at URLs, but I think it’s a bit
+clunky and confusing in terms of UX — especially if a 
+GET
+ request to 
+/snippets
+ normally
+renders something else (like a list of all snippets).
+Handler naming
+I’d also like to emphasize that there is no right or wrong way to name your handlers in Go.
+In this project, we’ll follow the convention of postfixing the names of any handlers that deal
+with 
+POST
+ requests with the word ‘Post’. Like so:
+Method
+Pattern
+Handler
+Action
+GET
+/snippet/create
+snippetCreate
+Display a HTML form for creating a new snippet
+POST
+/snippet/create
+snippetCreate
+Post
+Create a new snippet
+Alternatively, you could postfix the names of any handlers that display forms with the word
+‘Form’ or ‘View’, like this:Method
+Pattern
+Handler
+Action
+GET
+/snippet/create
+snippetCreate
+Form
+Display a HTML form for creating a new snippet
+POST
+/snippet/create
+snippetCreate
+Create a new snippet
+Or even prefix handler names with the words ‘show’ and ‘do’…
+Method
+Pattern
+Handler
+Action
+GET
+/snippet/create
+show
+SnippetCreate
+Display a HTML form for creating a new snippet
+POST
+/snippet/create
+do
+SnippetCreate
+Create a new snippet
+Basically, you have the freedom in Go to choose a naming convention which works for you
+and fits with your brain.

@@ -1,0 +1,135 @@
+Chapter 1.
+Introduction
+In this book we’ll be building a web application called Snippetbox, which lets people paste
+and share snippets of text — a bit like 
+Pastebin
+ or GitHub’s 
+Gists
+. Towards the end of the build
+it will look a bit like this:
+Our application will start off super simple, with just one web page. Then with each chapter
+we’ll build it up step-by-step until a user is able save and view snippets via the app. This will
+take us through topics like how to structure a project, routing requests, working with a
+database, processing forms and displaying dynamic data safely.
+Then later in the book we’ll add user accounts, and restrict the application so that only
+registered users can create snippets. This will take us through more advanced topics like
+configuring a HTTPS server, session management, user authentication and middleware.Conventions
+Throughout this book code blocks are shown with a silver background like below. If the code
+is particularly long, parts that aren’t relevant may be replaced with an ellipsis. To make it easy
+to follow along, most code blocks also have a title bar at the top indicating the name of the
+file that we’re working on.
+File: hello.go
+package
+ 
+main
+...
+ 
+// Indicates that some existing code has been omitted.
+func
+ 
+sayHello
+(
+)
+ 
+{
+    
+fmt
+.
+Println
+(
+"Hello world!"
+)
+}
+Terminal (command line) instructions are shown with a black background and start with a
+dollar symbol. These commands should work on any Unix-based operating system, including
+Mac OSX and Linux. Sample output is shown in silver beneath the command, like so:
+$ echo "Hello world!"
+Hello world!
+If you’re using Windows, you should replace the command with the DOS equivalent or carry
+out the action via the normal Windows GUI.
+Some chapters in this book end with an 
+additional information
+ section. These sections
+contain information that isn’t relevant to our application build, but is still important (or
+sometimes, just interesting) to know about. If you’re very new to Go, you might want to skip
+these parts and circle back to them later.
+Hint:
+ If you’re following along with the application build I recommend using the HTML
+version of this book instead of the PDF or EPUB. The HTML version works in all browsers,
+and the proper formatting of code blocks is retained if you want to copy-and-paste code
+directly from the book.
+About the author
+Hey, I’m Alex Edwards, a full-stack web developer and author. I live near Innsbruck, Austria.I’ve been working with Go for over 8 years, building production applications for myself and
+commercial clients, and helping people all around the world improve their Go skills.
+You can see more of my writing on 
+my blog
+ (where I publish detailed tutorials), some of my
+open-source work on 
+GitHub
+, and you can also follow me on 
+Instagram
+ and 
+Twitter
+.
+Copyright and disclaimer
+Let’s Go: Learn to build professional web applications with Go
+. Copyright © 2023 Alex Edwards.
+Last updated 2023-02-17 14:27:59 UTC. Version 2.20.0.
+The Go gopher was designed by 
+Renee French
+ and is used under the Creative Commons 3.0
+Attributions license. Cover gopher adapted from vectors by 
+Egon Elbre
+.
+The information provided within this book is for general informational purposes only. While the
+author and publisher have made every effort to ensure the accuracy of the information within
+this book was correct at time of publication there are no representations or warranties, express
+or implied, about the completeness, accuracy, reliability, suitability or availability with respect
+to the information, products, services, or related graphics contained in this book for any
+purpose. Any use of this information is at your own risk.Chapter 1.1.
+Prerequisites
+Background knowledge
+This book is designed for people who are new to Go, but you’ll probably find it more
+enjoyable if you have a general understanding of Go’s syntax first. If you find yourself
+struggling with the syntax, the 
+Little Book of Go
+ by Karl Seguin is a fantastic tutorial, or if you
+want something more interactive I recommend running through the 
+Tour of Go
+.
+I’ve also assumed that you’ve got a (very) basic understanding of HTML/CSS and SQL, and
+some familiarity with using your terminal (or command line for Windows users). If you’ve built
+a web application in any other language before — whether it’s Ruby, Python, PHP or C# —
+then this book should be a good fit for you.
+Go 1.20
+The information in this book is correct for the 
+latest major release of Go
+ (version 1.20), and
+you should install this if you’d like to code-along with the application build.
+If you’ve already got Go installed, you can check the version number from your terminal by
+using the 
+go version
+ command. The output should look similar to this:
+$ go version
+go version go1.20 linux/amd64
+If you need to upgrade your version of Go — or install Go from scratch — then please go ahead
+and do that now. Detailed instructions for different operating systems can be found here:
+Removing an old version of Go
+Installing Go on Mac OS X
+Installing Go on Windows
+Installing Go on Linux
+Other software
+There are a few other bits of software that you should make sure are available on yourcomputer if you want to follow along fully. They are:
+The 
+curl
+ tool for working with HTTP requests and responses from your terminal. On MacOS
+and Linux machines it should be pre-installed or available in your software repositories.
+Otherwise, you can download the latest version 
+from here
+.
+A web browser with good developer tools. I’ll be using 
+Firefox
+ in this book, but Chromium,
+Chrome or Microsoft Edge will work too.
+Your favorite text editor 
+

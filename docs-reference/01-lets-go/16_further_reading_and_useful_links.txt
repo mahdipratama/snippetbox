@@ -1,0 +1,30 @@
+Chapter 16.
+Further reading and useful links
+Coding and style guidelines
+Effective Go
+Clear is better than clever [video]
+ — Presentation by Dave Cheney from GopherCon
+Singapore 2019
+Go Code Review Comments
+ — Style guidelines plus common mistakes to avoid.
+Practical Go
+ — Real world advice for writing maintainable Go programs.
+What’s in a name?
+ — Guidelines for naming things in Go.
+Go Proverbs
+ — A collection of pithy guidelines for writing idiomatic Go.
+Recommended tutorials
+Don’t fear the pointer
+Interfaces Explained
+Data Races vs Race Conditions
+Understanding Mutexes
+Go 1.11 Modules
+Error Value FAQ
+An Overview of Go’s Tooling
+Traps, Gotchas, and Common Mistakes for New Golang Devs
+A Step-by-Step Guide to Go Internationalization & Localization
+Learning Go’s Concurrency Through Illustrations
+How to write benchmarks in Go
+Third-party package lists
+Awesome Go
+Go Projects
