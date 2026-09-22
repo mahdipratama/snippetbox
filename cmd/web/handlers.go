@@ -14,16 +14,22 @@ func home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// "Use the template.ParseFiles() function to read the template file into a template set"
-	ts, err := template.ParseFiles("./ui/html/pages/home.html")
+	files := []string{
+		"./ui/html/base.html",
+		"./ui/html/pages/home.html",
+	}
+
+	// Use the template.ParseFiles() function to read the template file into a template set
+	// yes, we can pass a slice of file paths as a variadic parameter
+	ts, err := template.ParseFiles(files...)
 	if err != nil {
 		log.Print(err.Error())
 		http.Error(w, "Internal Server Error", 500)
 	}
 
-	// Execute() method on the template set to write the template content as the response body.
-	// The last parameter to Execute() represents any dynamic data that we want to pass in, which for now we'll leave as nil."
-	err = ts.Execute(w, nil)
+	// ExecuteTemplate() method to write the content of the base
+	// Template as the response body.
+	err = ts.ExecuteTemplate(w, "base", nil)
 	if err != nil {
 		log.Print(err.Error())
 		http.Error(w, "Internal Server Error", 500)
