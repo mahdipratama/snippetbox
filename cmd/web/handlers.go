@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"text/template"
 )
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -12,7 +14,21 @@ func home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte("Hello from Snippetbox"))
+	// "Use the template.ParseFiles() function to read the template file into a template set"
+	ts, err := template.ParseFiles("./ui/html/pages/home.html")
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, "Internal Server Error", 500)
+	}
+
+	// Execute() method on the template set to write the template content as the response body.
+	// The last parameter to Execute() represents any dynamic data that we want to pass in, which for now we'll leave as nil."
+	err = ts.Execute(w, nil)
+	if err != nil {
+		log.Print(err.Error())
+		http.Error(w, "Internal Server Error", 500)
+	}
+
 }
 
 func snippetView(w http.ResponseWriter, r *http.Request) {
