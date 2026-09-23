@@ -4,18 +4,33 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
 )
 
 func main() {
 	mux := http.NewServeMux()
 
-	// command-line flag named 'addr'
 	addr := flag.String("addr", ":4000", "HTTP network address")
 
-	// Parse the command-line flag then assigns it to the addr variable
-	// call this before use the 'addr' or it'll still contain the default value ':4000'
-	// if any error occur during parsing, the app will be terminated
 	flag.Parse()
+
+	/*
+		log.new() to create custom logger for writting information messages
+		Parameters:
+				- destination to write the logs to (os.Stdout)
+				- string prefix message (INFO followed by a tab)
+				- flags to indicate what additional information to include joined with bitwise OR operator |
+	*/
+	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
+
+	/*
+		log.new() to create custom logger for error messages, but with Stderr
+		Parameters:
+				- destinations to write the logs to (os.Stderr)
+				- string prefix message (ERROR followed by a tab)
+				- flags to include relevant file name and line number use log.Lshofrtfile flag
+	*/
+	errorLog := log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Llongfile)
 
 	fileServer := http.FileServer(http.Dir("./ui/static/"))
 
@@ -25,12 +40,21 @@ func main() {
 	mux.HandleFunc("/snippet/view", snippetView)
 	mux.HandleFunc("/snippet/create", snippetCreate)
 
-	// value of 'addr' returned from the flag.String()
-	// is a pointer to the flag value, not the value itself
-	// need to dereference ( * symbol ) the pointer before use it.
-	// USAGE: go run ./cmd/web -addr=":<PORT>"
-	log.Printf("Starting server on %s", *addr)
-	err := http.ListenAndServe(*addr, mux)
-	log.Fatal(err)
+	/*
+		Initialize a new http.Server struct.
+		set the Addr and Handler fields so that the server uses the same
+		network address and routes as before.
+		set ErrorLog field: server now uses the custom errorLog logger
+
+	*/
+	srv := &http.Server{
+		Addr:     *addr,
+		ErrorLog: errorLog,
+		Handler:  mux,
+	}
+
+	infoLog.Printf("Starting server on %s", *addr)
+	err := srv.ListenAndServe()
+	errorLog.Fatal(err)
 
 }
