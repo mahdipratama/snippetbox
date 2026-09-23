@@ -7,8 +7,16 @@ import (
 	"os"
 )
 
+/*
+	application struct: as an application-wide dependencies for the whole app
+*/
+
+type application struct {
+	errorLog *log.Logger
+	infoLog  *log.Logger
+}
+
 func main() {
-	mux := http.NewServeMux()
 
 	addr := flag.String("addr", ":4000", "HTTP network address")
 
@@ -30,22 +38,28 @@ func main() {
 				- string prefix message (ERROR followed by a tab)
 				- flags to include relevant file name and line number use log.Lshofrtfile flag
 	*/
-	errorLog := log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Llongfile)
+	errorLog := log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
+
+	app := &application{
+		errorLog: errorLog,
+		infoLog:  infoLog,
+	}
+
+	mux := http.NewServeMux()
 
 	fileServer := http.FileServer(http.Dir("./ui/static/"))
 
 	mux.Handle("/static/", http.StripPrefix("/static", fileServer))
 
-	mux.HandleFunc("/", home)
-	mux.HandleFunc("/snippet/view", snippetView)
-	mux.HandleFunc("/snippet/create", snippetCreate)
+	mux.HandleFunc("/", app.home)
+	mux.HandleFunc("/snippet/view", app.snippetView)
+	mux.HandleFunc("/snippet/create", app.snippetCreate)
 
 	/*
 		Initialize a new http.Server struct.
 		set the Addr and Handler fields so that the server uses the same
 		network address and routes as before.
 		set ErrorLog field: server now uses the custom errorLog logger
-
 	*/
 	srv := &http.Server{
 		Addr:     *addr,
